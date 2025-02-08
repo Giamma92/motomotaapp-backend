@@ -21,7 +21,7 @@ router.get('/championship/:id/next-race', authMiddleware, async (req, res) => {
   .gt('event_date', now)
   .order('event_date', { ascending: true });
 
-  console.log("calendar", calendar);
+  //console.log("calendar", calendar);
 
   if (!calendar || calendar.length === 0) {
     return res.status(404).json({ error: 'No calendar found' });
