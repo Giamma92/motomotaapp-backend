@@ -1,16 +1,17 @@
 const express = require('express');
 const router = express.Router();
+const authMiddleware = require('../middleware/authMiddleware');
 const db = require('../models/db');
 
 // GET all bets
-router.get('/', async (req, res) => {
+router.get('/', authMiddleware, async (req, res) => {
     const { data, error } = await db.from('bets').select('*');
     if (error) return res.status(500).json({ error });
     res.json(data);
 });
 
 // ESubmit a bet
-router.post('/', async (req, res) => {
+router.post('/', authMiddleware, async (req, res) => {
     const { user_id, race_id, position } = req.body;
     const { data, error } = await db
       .from('bets')

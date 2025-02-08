@@ -10,12 +10,24 @@ app.use(cors());
 app.use(express.json());
 
 // route import (you can structure routes into separate files)
+const authRoutes = require('./routes/auth');
 const ridersRoutes = require('./routes/riders');
 const betsRoutes = require('./routes/bets');
+const userRoutes = require('./routes/user'); 
+const standingsRoutes = require('./routes/standings'); 
+const calendarRoutes = require('./routes/calendar'); 
 
 // Define routes
+
+// Public endpoint for authentication
+app.use('/api', authRoutes);
+// Protected endpoints
+app.use('/api', userRoutes);
 app.use('/api/riders', ridersRoutes);
 app.use('/api/bets', betsRoutes);
+app.use('/api', standingsRoutes);
+app.use('/api', calendarRoutes);
+
 
 // Health-check route
 app.get('/', (req, res) => {
