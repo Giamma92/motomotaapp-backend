@@ -6,7 +6,14 @@ const db = require('../models/db');
 // GET calendar of a specific championship
 router.get('/championship/:id/calendar', authMiddleware, async (req, res) => {
     const championshipId = req.params.id;
-    const { data, error } = await db.from('calendar').select('*').eq('championship_id', championshipId);
+    const { data, error } = await db.from('calendar')
+    .select(`
+      id,
+      race_order,
+      event_date,
+      event_time,
+      race_id(name)`)
+      .eq('championship_id', championshipId);
     if (error) return res.status(500).json({ error });
     res.json(data);
 });
@@ -16,7 +23,12 @@ router.get('/championship/:id/next-race', authMiddleware, async (req, res) => {
   const now = new Date().toISOString().split('T')[0];
   const championshipId = req.params.id;
   const { data: calendar, error } = await db.from('calendar')
-  .select('*')
+  .select(`
+    id,
+    race_order,
+    event_date,
+    event_time,
+    race_id(name)`)
   .eq('championship_id', championshipId)
   .gt('event_date', now)
   .order('event_date', { ascending: true });

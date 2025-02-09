@@ -16,6 +16,8 @@ router.post('/login', async (req, res) => {
         .eq('id', username)
         .single();
 
+    //console.log("User found: " + user);
+
     if (error) return res.status(500).json({ error });
     
     if (!user) {
@@ -32,7 +34,7 @@ router.post('/login', async (req, res) => {
     }
     // Generate a JWT token; ensure you have a secret in your environment variables.
     const token = jwt.sign(
-        { userId: user.profile_id, username: user.id },
+        { userId: user.profile_id, username: user.id, email: user.email, firstName: user.first_name, lastName: user.last_name },
         process.env.JWT_SECRET,
         { expiresIn: '1h' }
     );

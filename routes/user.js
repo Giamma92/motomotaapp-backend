@@ -11,7 +11,7 @@ router.get('/user-info', authMiddleware, async (req, res) => {
     // Query the user by username
     let { data: userInfo, error } = await db
         .from('users')
-        .select("profile_id,id,email,first_name,last_name,profile_image")
+        .select("id,password,profile_id,profile_image,first_name,last_name,last_access,first_change,email")
         .eq('profile_id', req.userId)
         .single();
 
