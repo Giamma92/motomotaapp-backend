@@ -9,8 +9,6 @@ router.get('/championship/:championship_id/fantasy_team', authMiddleware, async 
     const championshipId = req.params.championship_id;
     const username = req.username; // Provided by authMiddleware
 
-    console.log('Fetching fantasy team for user', username, 'in championship', championshipId);
-
     try {
         const { data, error } = await db
             .from('fantasy_teams')
@@ -31,6 +29,29 @@ router.get('/championship/:championship_id/fantasy_team', authMiddleware, async 
         res.json(data);
     } catch (err) {
         console.error('Unexpected error:', err);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
+// GET /championship/:championship_id/fantasy_teams
+// Returns all fantasy teams for the given championship id.
+router.get('/championship/:championship_id/fantasy_teams', authMiddleware, async (req, res) => {
+    const championshipId = req.params.championship_id;
+    
+    try {
+        const { data, error } = await db
+            .from('fantasy_teams')
+            .select('*')
+            .eq('championship_id', championshipId);
+
+        if (error) {
+            console.error("Error fetching fantasy teams:", error);
+            return res.status(500).json({ error: error.message });
+        }
+
+        res.json(data);
+    } catch (err) {
+        console.error("Unexpected error:", err);
         res.status(500).json({ error: 'Internal server error' });
     }
 });

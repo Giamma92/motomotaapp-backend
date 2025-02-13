@@ -2,6 +2,7 @@
 const express = require('express');
 const router = express.Router();
 const authMiddleware = require('../middleware/authMiddleware');
+const db = require('../models/db');
 
 // GET /championship/default
 // Returns the championship for the current year.
@@ -9,7 +10,7 @@ router.get('/championship/default', authMiddleware, async (req, res) => {
   try {
     const currentYear = new Date().getFullYear();
     const { data, error } = await db
-      .from('championship')
+      .from('championships')
       .select('*')
       .eq('year', currentYear)
       .maybeSingle();
@@ -29,10 +30,10 @@ router.get('/championship/default', authMiddleware, async (req, res) => {
 
 // GET /championship
 // Returns all championships.
-router.get('/championship', authMiddleware, async (req, res) => {
+router.get('/championships', authMiddleware, async (req, res) => {
   try {
     const { data, error } = await db
-      .from('championship')
+      .from('championships')
       .select('*')
       .order('year', { ascending: false });
     if (error) {

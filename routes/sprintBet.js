@@ -1,29 +1,22 @@
-// routes/bet.js
+// routes/sprintBet.js
 const express = require('express');
 const router = express.Router();
-const authMiddleware = require('../middleware/authMiddleware');
 const db = require('../models/db');
-
-// GET all bets
-router.get('/championship/:championship_id/bets', authMiddleware, async (req, res) => {
-    const { data, error } = await db.from('bets').select('*');
-    if (error) return res.status(500).json({ error });
-    res.json(data);
-});
+const authMiddleware = require('../middleware/authMiddleware');
 
 /**
- * POST /api/championship/:championship_id/bet
- * Inserts a new race bet.
+ * POST /api/championship/:championship_id/sprint_bet
+ * Inserts a new sprint bet.
  * Expected body: { race_id, rider_id, position, points, outcome }
  */
-router.post('/championship/:championship_id/bet', authMiddleware, async (req, res) => {
+router.post('/championship/:championship_id/sprint_bet', authMiddleware, async (req, res) => {
   const championshipId = req.params.championship_id;
   const userId = req.userId;
   const { race_id, rider_id, position, points, outcome } = req.body;
   
   try {
     const { data, error } = await db
-      .from('bets')
+      .from('sprint_bets')
       .insert([
         {
           championship_id: championshipId,
@@ -37,16 +30,15 @@ router.post('/championship/:championship_id/bet', authMiddleware, async (req, re
       ]);
     
     if (error) {
-      console.error("Error inserting race bet:", error);
+      console.error("Error inserting sprint bet:", error);
       return res.status(500).json({ error: error.message });
     }
     
     res.status(201).json(data[0]);
   } catch (err) {
-    console.error("Unexpected error in race bet endpoint:", err);
+    console.error("Unexpected error in sprint bet endpoint:", err);
     res.status(500).json({ error: "Internal server error" });
   }
 });
-
 
 module.exports = router;

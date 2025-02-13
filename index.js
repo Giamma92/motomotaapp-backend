@@ -18,6 +18,8 @@ const standingsRoutes = require('./routes/standings');
 const calendarRoutes = require('./routes/calendar'); 
 const fantasyTeamRoutes = require('./routes/fantasyTeam');
 const championshipRoutes = require('./routes/championship');
+const lineupsRoutes = require('./routes/lineups');
+const sprintBetRoutes = require('./routes/sprintBet');
 
 
 // Define routes
@@ -26,13 +28,14 @@ const championshipRoutes = require('./routes/championship');
 app.use('/api', authRoutes);
 // Protected endpoints
 app.use('/api', userRoutes);
-app.use('/api/riders', ridersRoutes);
-app.use('/api/bets', betsRoutes);
+app.use('/api', ridersRoutes);
 app.use('/api', standingsRoutes);
 app.use('/api', calendarRoutes);
 app.use('/api', fantasyTeamRoutes);
 app.use('/api', championshipRoutes);
-
+app.use('/api', lineupsRoutes);
+app.use('/api', sprintBetRoutes);
+app.use('/api', betsRoutes);
 
 // Health-check route
 app.get('/', (req, res) => {

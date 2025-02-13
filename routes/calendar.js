@@ -11,6 +11,8 @@ router.get('/championship/:id/calendar', authMiddleware, async (req, res) => {
       id,
       race_order,
       event_date,
+      qualifications_time,
+      sprint_time,
       event_time,
       race_id(name)`)
       .eq('championship_id', championshipId);
@@ -18,45 +20,45 @@ router.get('/championship/:id/calendar', authMiddleware, async (req, res) => {
     res.json(data);
 });
 
-// GET calendar next-race of a specific championship
-router.get('/championship/:id/next-race', authMiddleware, async (req, res) => {
-  const now = new Date().toISOString().split('T')[0];
-  const championshipId = req.params.id;
-  const { data: calendar, error } = await db.from('calendar')
-  .select(`
-    id,
-    race_order,
-    event_date,
-    event_time,
-    race_id(name)`)
-  .eq('championship_id', championshipId)
-  .gt('event_date', now)
-  .order('event_date', { ascending: true });
+/**
+ * GET /api/championship/:championship_id/next-race
+ * Returns the next race for the championship.
+ * Now uses gte condition so that if today's event exists, it is returned.
+ */
+router.get('/championship/:championship_id/next-race', authMiddleware, async (req, res) => {
+  const championshipId = req.params.championship_id;
+  try {
+    // Get today's date as "YYYY-MM-DD"
+    const today = new Date().toISOString().split('T')[0];
 
-  //console.log("calendar", calendar);
+    // Query for races where event_date is greater than or equal to today
+    const { data, error } = await db
+      .from('calendar')
+      .select(`
+        id,
+        race_order,
+        event_date,
+        qualifications_time,
+        sprint_time,
+        event_time,
+        race_id(name)`)
+      .eq('championship_id', championshipId)
+      .gte('event_date', today)
+      .order('event_date', { ascending: true })
+      .limit(1);
 
-  if (!calendar || calendar.length === 0) {
-    return res.status(404).json({ error: 'No calendar found' });
+    if (error) {
+      console.error('Error fetching next race:', error);
+      return res.status(500).json({ error: error.message });
+    }
+    if (!data || data.length === 0) {
+      return res.status(404).json({ error: 'No upcoming race found' });
+    }
+    res.json(data[0]);
+  } catch (err) {
+    console.error('Unexpected error:', err);
+    res.status(500).json({ error: 'Internal server error' });
   }
-
-  var nextRace = calendar[0];
-
-  //console.log("calendar", nextRace);
-
-  if (error) return res.status(500).json({ error });
-  res.json(nextRace);
 });
 
-// ESubmit a bet
-router.post('/', authMiddleware, async (req, res) => {
-    const { user_id, race_id, position } = req.body;
-    const { data, error } = await db
-      .from('races')
-      .insert([{ user_id, race_id, position }]);
-  
-    if (error) return res.status(500).json({ error });
-    res.json(data);
-  });
-
-  
 module.exports = router;
