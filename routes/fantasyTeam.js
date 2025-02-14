@@ -12,7 +12,11 @@ router.get('/championship/:championship_id/fantasy_team', authMiddleware, async 
     try {
         const { data, error } = await db
             .from('fantasy_teams')
-            .select('name,team_image,official_rider_1(first_name,last_name),official_rider_2(first_name,last_name),reserve_rider(first_name,last_name)')
+            .select(`name,
+                    team_image,
+                    official_rider_1(first_name,last_name,number),
+                    official_rider_2(first_name,last_name,number),
+                    reserve_rider(first_name,last_name,number)`)
             .eq('championship_id', championshipId)
             .eq('user_id', username)
             .single();
@@ -41,7 +45,12 @@ router.get('/championship/:championship_id/fantasy_teams', authMiddleware, async
     try {
         const { data, error } = await db
             .from('fantasy_teams')
-            .select('*')
+            .select(`name,
+                    user_id(id,email,first_name,last_name),
+                    team_image,
+                    official_rider_1(first_name,last_name,number),
+                    official_rider_2(first_name,last_name,number),
+                    reserve_rider(first_name,last_name,number)`)
             .eq('championship_id', championshipId);
 
         if (error) {
