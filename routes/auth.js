@@ -2,45 +2,66 @@ const express = require('express');
 const router = express.Router();
 const db = require('../models/db'); // Your PostgreSQL connection pool
 const jwt = require('jsonwebtoken');
-const bcrypt = require('bcrypt'); // Use bcrypt for password hashing
 
 // POST /api/login
 router.post('/login', async (req, res) => {
     console.log("New login request");
-    const { username, password } = req.body;
+    const { username, password: clientHashedPassword } = req.body;
 
-    // Query the user by username
-    let { data: user, error } = await db
-        .from('users')
-        .select("*")
-        .eq('id', username)
-        .single();
+    try {
+        // 🔹 Query the user by username
+        let { data: user, error } = await db
+            .from('users')
+            .select("*")
+            .eq('id', username)
+            .single();
 
-    //console.log("User found: " + user);
+        if (error) return res.status(500).json({ error: error.message });
 
-    if (error) return res.status(500).json({ error });
-    
-    if (!user) {
-        console.log("No user found: " + username);
-        return res.status(401).json({ error: 'Invalid username or password' });
+        if (!user) {
+            console.log("No user found: " + username);
+            return res.status(401).json({ error: 'Invalid username or password' });
+        }
+
+        // 🔹 Compare the received hashed password with the stored hash
+        if (clientHashedPassword !== user.password) {
+            console.log("Invalid password for user: " + username);
+            return res.status(401).json({ error: 'Invalid username or password' });
+        }
+
+        // 🔹 Update last_access timestamp
+        const { error: updateError } = await db
+            .from('users')
+            .update({ last_access: new Date().toISOString() })
+            .eq('id', username);
+
+        if (updateError) {
+            console.error("Error updating last_access:", updateError);
+            return res.status(500).json({ error: 'Failed to update last_access' });
+        }
+
+        console.log(`Updated last_access for user: ${username}`);
+
+        // 🔹 Generate a JWT token
+        const token = jwt.sign(
+            {
+                userId: user.profile_id,
+                username: user.id,
+                email: user.email,
+                firstName: user.first_name,
+                lastName: user.last_name
+            },
+            process.env.JWT_SECRET,
+            { expiresIn: '1h' }
+        );
+
+        res.json({ token });
+
+    } catch (err) {
+        console.error("Login error:", err);
+        res.status(500).json({ error: 'Internal server error' });
     }
-
-    // Compare provided password with hashed password stored in the DB.
-    // (If your passwords are stored in plain text—which is not recommended—skip bcrypt.compare.)
-    const isValid = await bcrypt.compare(password, user.password);
-    if (!isValid) {
-        console.log("Invalid password for user: " + username);
-        return res.status(401).json({ error: 'Invalid username or password' });
-    }
-    // Generate a JWT token; ensure you have a secret in your environment variables.
-    const token = jwt.sign(
-        { userId: user.profile_id, username: user.id, email: user.email, firstName: user.first_name, lastName: user.last_name },
-        process.env.JWT_SECRET,
-        { expiresIn: '1h' }
-    );
-
-    res.json({ token });
-
 });
+
 
 module.exports = router;
