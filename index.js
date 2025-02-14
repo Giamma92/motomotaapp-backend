@@ -20,6 +20,7 @@ const fantasyTeamRoutes = require('./routes/fantasyTeam');
 const championshipRoutes = require('./routes/championship');
 const lineupsRoutes = require('./routes/lineups');
 const sprintBetRoutes = require('./routes/sprintBet');
+const raceDetails = require('./routes/raceDetails');
 
 
 // Define routes
@@ -36,6 +37,7 @@ app.use('/api', championshipRoutes);
 app.use('/api', lineupsRoutes);
 app.use('/api', sprintBetRoutes);
 app.use('/api', betsRoutes);
+app.use('/api', raceDetails);
 
 // Health-check route
 app.get('/', (req, res) => {

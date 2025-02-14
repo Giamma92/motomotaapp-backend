@@ -5,20 +5,63 @@ const db = require('../models/db');
 
 // GET calendar of a specific championship
 router.get('/championship/:id/calendar', authMiddleware, async (req, res) => {
-    const championshipId = req.params.id;
-    const { data, error } = await db.from('calendar')
-    .select(`
-      id,
-      race_order,
-      event_date,
-      qualifications_time,
-      sprint_time,
-      event_time,
-      race_id(name)`)
+  const championshipId = req.params.id;
+  try {
+    const { data, error } = await db
+      .from('calendar')
+      .select(`
+        id,
+        race_order,
+        event_date,
+        qualifications_time,
+        sprint_time,
+        event_time,
+        race_id(name)
+      `)
       .eq('championship_id', championshipId);
-    if (error) return res.status(500).json({ error });
+
+    if (error) {
+      console.error('Error fetching calendar:', error);
+      return res.status(500).json({ error: error.message });
+    }
     res.json(data);
+  } catch (err) {
+    console.error('Unexpected error fetching calendar:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
 });
+
+// GET a specific calendar row for a championship
+router.get('/championship/:championship_id/calendar/:calendar_id', authMiddleware, async (req, res) => {
+  const championshipId = req.params.championship_id;
+  const calendarId = req.params.calendar_id;
+  try {
+    const { data, error } = await db
+      .from('calendar')
+      .select(`
+        id,
+        race_order,
+        event_date,
+        qualifications_time,
+        sprint_time,
+        event_time,
+        race_id(name)
+      `)
+      .eq('championship_id', championshipId)
+      .eq('id', calendarId)
+      .single();
+
+    if (error) {
+      console.error('Error fetching calendar row:', error);
+      return res.status(500).json({ error: error.message });
+    }
+    res.json(data);
+  } catch (err) {
+    console.error('Unexpected error fetching calendar row:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 
 /**
  * GET /api/championship/:championship_id/next-race
