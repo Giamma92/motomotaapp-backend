@@ -9,8 +9,6 @@ router.get('/championship/:championship_id/standings', authMiddleware, async (re
   const championshipId = req.params.championship_id;
   const username = req.username; // Provided by authMiddleware
 
-  console.log('Fetching fantasy team for user', username, 'in championship', championshipId);
-
   try {
       const { data, error } = await db
           .from('standings')

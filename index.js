@@ -14,6 +14,7 @@ const authRoutes = require('./routes/auth');
 const ridersRoutes = require('./routes/riders');
 const betsRoutes = require('./routes/bets');
 const userRoutes = require('./routes/user'); 
+const userSettingsRoute = require('./routes/userSettings');
 const standingsRoutes = require('./routes/standings'); 
 const calendarRoutes = require('./routes/calendar'); 
 const fantasyTeamRoutes = require('./routes/fantasyTeam');
@@ -38,6 +39,7 @@ app.use('/api', lineupsRoutes);
 app.use('/api', sprintBetRoutes);
 app.use('/api', betsRoutes);
 app.use('/api', raceDetails);
+app.use('/api',userSettingsRoute);
 
 // Health-check route
 app.get('/', (req, res) => {
