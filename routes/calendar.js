@@ -16,7 +16,7 @@ router.get('/championship/:id/calendar', authMiddleware, async (req, res) => {
         qualifications_time,
         sprint_time,
         event_time,
-        race_id(name)
+        race_id(name,location)
       `)
       .eq('championship_id', championshipId);
 
@@ -45,7 +45,7 @@ router.get('/championship/:championship_id/calendar/:calendar_id', authMiddlewar
         qualifications_time,
         sprint_time,
         event_time,
-        race_id(name)
+        race_id(name,location)
       `)
       .eq('championship_id', championshipId)
       .eq('id', calendarId)
