@@ -22,7 +22,7 @@ const championshipRoutes = require('./routes/championship');
 const lineupsRoutes = require('./routes/lineups');
 const sprintBetRoutes = require('./routes/sprintBet');
 const raceDetails = require('./routes/raceDetails');
-
+const config = require('./routes/config');
 
 // Define routes
 
@@ -40,6 +40,7 @@ app.use('/api', sprintBetRoutes);
 app.use('/api', betsRoutes);
 app.use('/api', raceDetails);
 app.use('/api',userSettingsRoute);
+app.use('/api', config); 
 
 // Health-check route
 app.get('/', (req, res) => {
