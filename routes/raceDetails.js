@@ -53,7 +53,7 @@ router.get('/championship/:championship_id/race-details/:calendar_id', authMiddl
 
         // Query bet results for the given race and championship
         const { data: bets, error: betsError } = await db
-            .from('bets')
+            .from('race_bets')
             .select(`id,
                 championship_id,
                 calendar_id(race_id(name,location)),

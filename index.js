@@ -12,7 +12,7 @@ app.use(express.json());
 // route import (you can structure routes into separate files)
 const authRoutes = require('./routes/auth');
 const ridersRoutes = require('./routes/riders');
-const betsRoutes = require('./routes/bets');
+const betsRoutes = require('./routes/raceBets');
 const userRoutes = require('./routes/user'); 
 const userSettingsRoute = require('./routes/userSettings');
 const standingsRoutes = require('./routes/standings'); 

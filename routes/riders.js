@@ -30,6 +30,7 @@ router.get('/championship/:id/riders', authMiddleware, async (req, res) => {
       .select(`
         id,
         rider_id(
+          id,
           first_name,
           last_name,
           number
