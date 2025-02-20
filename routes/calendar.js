@@ -18,7 +18,8 @@ router.get('/championship/:id/calendar', authMiddleware, async (req, res) => {
         event_time,
         race_id(name,location)
       `)
-      .eq('championship_id', championshipId);
+      .eq('championship_id', championshipId)
+      .order('race_order', { ascending: true });
 
     if (error) {
       console.error('Error fetching calendar:', error);
