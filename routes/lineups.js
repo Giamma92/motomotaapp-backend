@@ -15,7 +15,12 @@ router.get('/championship/:championship_id/lineups/:race_id', authMiddleware, as
   try {
     const { data, error } = await db
       .from('lineups')
-      .select()
+      .select(`id,
+               race_rider_id(id,first_name, last_name, number),
+               qualifying_rider_id(id,first_name, last_name, number),
+               championship_id,
+               user_id,
+               calendar_id`)
       .eq('championship_id', championship_id)
       .eq('user_id', user_id)
       .eq('calendar_id', race_id);
