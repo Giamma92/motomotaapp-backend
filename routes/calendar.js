@@ -46,7 +46,7 @@ router.get('/championship/:championship_id/calendar/:calendar_id', authMiddlewar
         qualifications_time,
         sprint_time,
         event_time,
-        race_id(name,location)
+        race_id(name,location,country)
       `)
       .eq('championship_id', championshipId)
       .eq('id', calendarId)
@@ -85,7 +85,7 @@ router.get('/championship/:championship_id/next-race', authMiddleware, async (re
         qualifications_time,
         sprint_time,
         event_time,
-        race_id(name,location)`)
+        race_id(name,location,country`)
       .eq('championship_id', championshipId)
       .gte('event_date', today)
       .order('event_date', { ascending: true })
