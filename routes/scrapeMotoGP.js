@@ -17,16 +17,134 @@ router.get('/championship/:id/calendar/:calendar_id/motogp-results/', async (req
     const year = championship.year
     
     const calendarId = req.params.calendar_id;
-    const calendarRace = await loadCalendarRace(championshipId,calendarId);
+    const calendarRace = await loadCalendarRace(calendarId);
     const calendarCountry = calendarRace?.race_id?.country ?? 'unknown';
     if (calendarCountry == 'unknown') 
         return res.status(500).json({ error: 'No calendar race found with provided id' });
 
-    const url = `${baseUrl}/${year}/${calendarCountry}/motogp/rac/classification`;
+    const riders = await loadChampionshipRiders(championshipId);
 
-    const data = await scrapeMotoGPResults(url);
-    res.json(data);
+    let results = [];
+    let url = '';
+
+    url = `${baseUrl}/${year}/${calendarCountry}/motogp/q1/classification`;
+    const q1Data = await scrapeMotoGPResults(url);
+
+    url = `${baseUrl}/${year}/${calendarCountry}/motogp/q2/classification`;
+    const q2Data = await scrapeMotoGPResults(url);
+
+    if(!!q1Data && q1Data.length != 0 && !!q2Data && q2Data.length != 0) {
+        
+        q1DataSlice = q1Data.slice(2);
+        q1DataFixed = q1DataSlice.map(q => { return {
+            position: q.position + 10,
+            points: q.points,
+            rider_number: q.rider_number,
+            rider_name: q.rider_name,
+            team: q.team
+        }});
+        qualifyingData = [...q2Data, ...q1DataFixed];
+        //console.log("Qualifying data fixed", qualifyingData);
+        console.log(`⌛ Processing qualifying data: ${qualifyingData.length} rows...`);
+        for(let i=0; i<qualifyingData.length; i++) {
+            let row = qualifyingData[i];
+            let champRider = riders?.find(r => r.rider_id.number == +row.rider_number);
+            
+            if(!champRider?.rider_id?.id)
+                continue;
+            
+            results.push({
+                rider_id: champRider.rider_id.id,
+                championship_id: +championshipId,
+                calendar_id: +calendarId,
+                qualifying_position: row.position,
+                qualifying_points: getMotoGPPoints(row.position),
+            });
+        }
+        console.log(`✅ Processed qualifying data completed!`);
+    }
+
+    url = `${baseUrl}/${year}/${calendarCountry}/motogp/spr/classification`;
+    const sprData = await scrapeMotoGPResults(url);
+
+    if(!!sprData && sprData.length != 0) {
+        console.log(`⌛ Processing sprint data: ${sprData.length} rows...`);
+        for(let i=0; i<sprData.length; i++) {
+            let row = sprData[i];
+            let champRider = riders?.find(r => r.rider_id.number == +row.rider_number);
+            
+            if(!champRider?.rider_id?.id)
+                continue;
+            
+            results.push({
+                rider_id: champRider.rider_id.id,
+                championship_id: +championshipId,
+                calendar_id: +calendarId,
+                sprint_position: row.position,
+                sprint_points: row.points,
+            });
+        }
+        console.log(`✅ Processed sprint data completed!`);
+    }
+
+    url = `${baseUrl}/${year}/${calendarCountry}/motogp/rac/classification`;
+    const racData = await scrapeMotoGPResults(url);
+
+    if(!!racData && racData.length != 0) {
+        console.log(`⌛ Processing race data: ${sprData.length} rows...`);
+        for(let i=0; i<sprData.length; i++) {
+            let row = sprData[i];
+            const champRider = riders?.find(r => r.rider_id.number == +row.rider_number);
+            
+            if(!champRider?.rider_id?.id)
+                continue;
+            
+            results.push({
+                championship_id: +championshipId,
+                calendar_id: +calendarId,
+                rider_id: champRider.rider_id.id,
+                race_position: row.race_position,
+                race_points: row.race_points,
+            });
+        }
+        console.log(`✅ Processed race data completed!`);
+    }
+
+    const mergedResults = mergeResults(results);
+
+    console.log("Merged values: ", mergedResults);
+    
+    await saveToSupabase(mergedResults);
+
+    res.json(mergedResults);
 });
+
+async function loadChampionshipRiders(championshipId) {
+    try {
+        console.log(`⌛ Waiting for load riders of championship (id: ${championshipId})...`);
+        const { data, error } = await db
+            .from('championship_riders')
+            .select(`
+            id,
+            rider_id(
+                id,
+                first_name,
+                last_name,
+                number
+            )
+            `)
+            .eq('championship_id', championshipId);
+        if (error) {
+            console.error('Error fetching championship riders:', error);
+            return {};
+        }
+        console.log("✅ Championship riders found!", data);
+        return data;
+    } catch (err) {
+        console.error('Unexpected error fetching riders:', err);
+        return {};
+    }
+}
 
 async function loadChampionship(championshipId) {
     try {
@@ -50,17 +168,16 @@ async function loadChampionship(championshipId) {
     }
 }
 
-async function loadCalendarRace(championshipId, raceId) {
+async function loadCalendarRace(calendarId) {
     try {
-        console.log(`⌛ Waiting for load calendar race (race_id: ${raceId}, championship_id: ${championshipId})...`);
+        console.log(`⌛ Waiting for load calendar race (id: ${calendarId})...`);
         const { data, error } = await db
             .from('calendar')
             .select(`
                 id,
                 race_id(name,location,country)
                 `)
-            .eq('championship_id', championshipId)
-            .eq('race_id', raceId)
+            .eq('id', calendarId)
             .single();
 
         if (error) {
@@ -116,15 +233,20 @@ async function scrapeMotoGPResults(url) {
         }
 
         // ✅ 4. Verify if the classification table exists
-        const tableExists = await page.$('.results-table__table');
+        let tableExists = await page.$('.results-table__table');
         if (!tableExists) {
-            console.log("❌ Table still not found. Trying alternative methods...");
-            
+            console.log("❌ Table not found.");
+            console.log("⌛ Waiting for the table to appear...");
+            try {
+                tableExists = await page.waitForSelector('.results-table__table', { timeout: 15000 }); // Wait longer if needed
+            } catch(error){
+                console.log("❌ Table still not found. Trying alternative methods...");
+                return;
+            }
             // Screenshot to debug
             //await page.screenshot({ path: 'debug_screenshot.png', fullPage: true });
             //console.log("📸 Screenshot saved as 'debug_screenshot.png' to check what is loaded.");
             
-            return;
         }
         console.log("✅ Classification table found!");
 
@@ -160,9 +282,6 @@ async function scrapeMotoGPResults(url) {
         } else {
             console.log("✅ Successfully scraped MotoGP results:");
             console.table(results);
-
-            // ✅ 6. Save to Supabase
-            //await saveToSupabase(results);
         }
 
     } catch (error) {
@@ -175,27 +294,62 @@ async function scrapeMotoGPResults(url) {
     return results;
 }
 
+function getMotoGPPoints(position) {
+    const pointsTable = {
+        1: 25,  2: 20,  3: 16,  4: 13,  5: 11,
+        6: 10,  7: 9,   8: 8,   9: 7,  10: 6,
+        11: 5,  12: 4,  13: 3,  14: 2,  15: 1
+    };
+
+    return pointsTable[position] || 0;
+}
+
+function mergeResults(data) {
+    const merged = {};
+
+    data.forEach(item => {
+        const key = `${item.championship_id}-${item.rider_id}-${item.calendar_id}`;
+
+        if (!merged[key]) {
+            merged[key] = { ...item };
+        } else {
+            // Merge properties
+            Object.keys(item).forEach(prop => {
+                if (prop !== 'id' && typeof item[prop] === 'number') {
+                    if (!merged[key][prop]) {
+                        merged[key][prop] = item[prop];
+                    }
+                    //merged[key][prop] = (merged[key][prop] || 0) + item[prop];
+                }
+            });
+        }
+    });
+
+    return Object.values(merged);
+}
+
 // 🔹 Function to Save Data to Supabase
-async function saveToSupabase(race_id, championship_id, results) {
+async function saveToSupabase(results) {
     console.log("📡 Sending data to Supabase...");
+    try {
+        const { data, error } = await db
+            .from('motogp_results')
+            .upsert(results, { onConflict: 'championship_id, calendar_id, rider_id' })
+            .select();
 
-    const { data, error } = await db
-        .from('motogp_results')
-        .upsert(results.map(r => ({
-            championship_id: championship_id,
-            race_id: race_id,
-            position: r.position,
-            rider_number: r.rider_number,
-            rider_name: r.rider_name,
-            team: r.team,
-            points: r.points
-        })), { onConflict: 'championship_id, user_id, calendar_id, rider_id' })
-        .select();
+            if (error) {
+                console.error('❌ Error saving data to Supabase:', error);
+                return {};
+            }
+            if(data?.length)
+                console.log("✅ Results saved successfully!", data);
+            else
+                console.log("❌ No data saved!", data);
+            return data;
 
-    if (error) {
+    } catch (error) {
         console.error("❌ Error saving data to Supabase:", error);
-    } else {
-        console.log("✅ Data saved successfully in Supabase:", data);
+        return {};
     }
 }
 
