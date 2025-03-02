@@ -7,7 +7,7 @@ const authMiddleware = require('../middleware/authMiddleware');
 
 const baseUrl = "https://www.motogp.com/it/gp-results";
 
-// GET all riders (you might pre-populate this table)
+// GET motopg results on motogp.com
 router.get('/championship/:id/calendar/:calendar_id/motogp-results/', async (req, res) => {
     const championshipId = req.params.id;
     const championship = await loadChampionship(championshipId);

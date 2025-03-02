@@ -24,6 +24,8 @@ const sprintBetRoutes = require('./routes/sprintBet');
 const raceDetails = require('./routes/raceDetails');
 const config = require('./routes/config');
 const scrapeMotoGp = require('./routes/scrapeMotoGP');
+const calcScores = require('./routes/calcScores');
+
 
 // Define routes
 
@@ -43,6 +45,7 @@ app.use('/api', raceDetails);
 app.use('/api',userSettingsRoute);
 app.use('/api', config); 
 app.use('/api', scrapeMotoGp);
+app.use('/api', calcScores);
 
 // Health-check route
 app.get('/', (req, res) => {
