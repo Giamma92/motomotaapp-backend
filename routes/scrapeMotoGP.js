@@ -92,8 +92,8 @@ router.get('/championship/:id/calendar/:calendar_id/motogp-results/', async (req
 
     if(!!racData && racData.length != 0) {
         console.log(`⌛ Processing race data: ${sprData.length} rows...`);
-        for(let i=0; i<sprData.length; i++) {
-            let row = sprData[i];
+        for(let i=0; i<racData.length; i++) {
+            let row = racData[i];
             const champRider = riders?.find(r => r.rider_id.number == +row.rider_number);
             
             if(!champRider?.rider_id?.id)
@@ -103,8 +103,8 @@ router.get('/championship/:id/calendar/:calendar_id/motogp-results/', async (req
                 championship_id: +championshipId,
                 calendar_id: +calendarId,
                 rider_id: champRider.rider_id.id,
-                race_position: row.race_position,
-                race_points: row.race_points,
+                race_position: row.position,
+                race_points: row.points,
             });
         }
         console.log(`✅ Processed race data completed!`);
