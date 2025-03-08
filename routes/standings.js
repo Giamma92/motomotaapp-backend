@@ -12,7 +12,7 @@ router.get('/championship/:championship_id/standings', authMiddleware, async (re
   try {
       const { data, error } = await db
           .from('standings')
-          .select('*')
+          .select('id, user_id(id, first_name, last_name), championship_id, position, score')
           .eq('championship_id', championshipId)
           .order('score', { ascending: false });
 
@@ -41,7 +41,7 @@ router.post('/standings', authMiddleware, async (req, res) => {
   
     if (error) return res.status(500).json({ error });
     res.json(data);
-  });
+});
 
   
 module.exports = router;

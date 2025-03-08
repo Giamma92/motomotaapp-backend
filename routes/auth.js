@@ -12,7 +12,7 @@ router.post('/login', async (req, res) => {
         // 🔹 Query the user by username
         let { data: user, error } = await db
             .from('users')
-            .select("*")
+            .select('*')
             .eq('id', username)
             .single();
 
@@ -27,6 +27,17 @@ router.post('/login', async (req, res) => {
         if (clientHashedPassword !== user.password) {
             console.log("Invalid password for user: " + username);
             return res.status(401).json({ error: 'Invalid username or password' });
+        }
+
+        // 🔹 Fetch user roles
+        const { data: roles, error: rolesError } = await db
+            .from('user_roles')
+            .select('user_id, role_id(id, description)')
+            .eq('user_id', username);
+
+        if (rolesError) {
+            console.error("Error fetching user roles:", rolesError);
+            return res.status(500).json({ error: 'Failed to fetch user roles' });
         }
 
         // 🔹 Update last_access timestamp
@@ -49,7 +60,8 @@ router.post('/login', async (req, res) => {
                 username: user.id,
                 email: user.email,
                 firstName: user.first_name,
-                lastName: user.last_name
+                lastName: user.last_name,
+                roles: roles.map(r => r.role_id.description)
             },
             process.env.JWT_SECRET,
             { expiresIn: '1h' }
