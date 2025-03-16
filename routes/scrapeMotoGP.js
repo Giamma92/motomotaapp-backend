@@ -1,4 +1,5 @@
 const puppeteer = require('puppeteer');
+const chromium = require('chrome-aws-lambda');
 
 const express = require('express');
 const router = express.Router();
@@ -197,12 +198,22 @@ async function loadCalendarRace(calendarId) {
 async function scrapeMotoGPResults(url) {
     let results = {};
     console.log("🚀 Launching Puppeteer...");
-    const browser = await puppeteer.launch({ headless: "new", args: ['--no-sandbox', '--disable-setuid-sandbox'] }); 
+    //const browser = await puppeteer.launch({ headless: "new", args: ['--no-sandbox', '--disable-setuid-sandbox'] }); 
+    const browser = await puppeteer.launch({
+        args: [...chromium.args, "--no-sandbox", "--disable-setuid-sandbox"],
+        executablePath: await chromium.executablePath || '/usr/bin/google-chrome-stable',
+        headless: true,
+        ignoreHTTPSErrors: true,
+        protocolTimeout: 120000, // 2 minutes
+    });
     const page = await browser.newPage();
+    // Increase navigation timeout
+    await page.setDefaultNavigationTimeout(120000); // 2 minutes
+    await page.setDefaultTimeout(120000); // 2 minutes
 
     try {
         console.log(`🌍 Navigating to ${url}...`);
-        const response = await page.goto(url, { waitUntil: 'domcontentloaded' });
+        const response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 120000 });
 
         console.log("⌛ Waiting for content to load...");
         await new Promise(resolve => setTimeout(resolve, 5000)); // Wait longer in case of JavaScript rendering
