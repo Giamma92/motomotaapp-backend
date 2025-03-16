@@ -3,7 +3,8 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "postinstall": "npx puppeteer browsers install chrome && bash install-dependencies.sh",
+    "postinstall": "npx puppeteer browsers install chrome",
+    "install-deps": "bash install-dependencies.sh",
     "test": "echo \"Error: no test specified\" && exit 1",
     "build": "echo \"No build step required\"",
     "start": "node index.js",
