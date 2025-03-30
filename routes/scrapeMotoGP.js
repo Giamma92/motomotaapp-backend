@@ -198,6 +198,7 @@ async function loadCalendarRace(calendarId) {
 async function scrapeMotoGPResults(url) {
     let results = {};
     console.log("🚀 Launching Puppeteer...");
+    // first works in local
     //const browser = await puppeteer.launch({ headless: "new", args: ['--no-sandbox', '--disable-setuid-sandbox'] }); 
     const browser = await puppeteer.launch({
         args: [...chromium.args, "--no-sandbox", "--disable-setuid-sandbox"],
