@@ -203,8 +203,7 @@ async function scrapeMotoGPResults(url) {
     const browser = await puppeteer.launch({
         args: [...chromium.args, "--no-sandbox", "--disable-setuid-sandbox"],
         executablePath: await chromium.executablePath(
-            "/opt/chromium"
-            //"https://github.com/Sparticuz/chromium/releases/download/v133.0.0/chromium-133.0.0-pack.tar"
+            "https://github.com/Sparticuz/chromium/releases/download/v133.0.0/chromium-v133.0.0-pack.tar"
         ),
         defaultViewport: chromium.defaultViewport,
         headless: chromium.headless,
