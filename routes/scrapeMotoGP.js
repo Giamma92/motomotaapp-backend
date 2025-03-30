@@ -1,5 +1,5 @@
-const puppeteer = require('puppeteer');
-const chromium = require('chrome-aws-lambda');
+const puppeteer = require('puppeteer-core');
+const chromium = require('@sparticuz/chromium-min');
 
 const express = require('express');
 const router = express.Router();
@@ -202,8 +202,12 @@ async function scrapeMotoGPResults(url) {
     //const browser = await puppeteer.launch({ headless: "new", args: ['--no-sandbox', '--disable-setuid-sandbox'] }); 
     const browser = await puppeteer.launch({
         args: [...chromium.args, "--no-sandbox", "--disable-setuid-sandbox"],
-        executablePath: await chromium.executablePath || '/usr/bin/google-chrome-stable',
-        headless: true,
+        executablePath: await chromium.executablePath(
+            "/opt/chromium"
+            //"https://github.com/Sparticuz/chromium/releases/download/v133.0.0/chromium-133.0.0-pack.tar"
+        ),
+        defaultViewport: chromium.defaultViewport,
+        headless: chromium.headless,
         ignoreHTTPSErrors: true,
         protocolTimeout: 120000, // 2 minutes
     });

@@ -15,15 +15,14 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "@sparticuz/chromium-min": "^133.0.0",
     "@supabase/supabase-js": "^2.48.1",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
     "jsonwebtoken": "^9.0.2",
     "pg": "^8.13.1",
-    "puppeteer": "^24.2.1",
-    "puppeteer-core": "^24.4.0",
-    "chrome-aws-lambda": "^10.1.0"
+    "puppeteer-core": "^24.4.0"
   },
   "devDependencies": {
     "nodemon": "^3.1.9"
