@@ -198,13 +198,13 @@ async function loadCalendarRace(calendarId) {
 async function scrapeMotoGPResults(url) {
     let results = {};
     console.log("🚀 Launching Puppeteer...");
-    // first works in local
-    //const browser = await puppeteer.launch({ headless: "new", args: ['--no-sandbox', '--disable-setuid-sandbox'] }); 
+
     const browser = await puppeteer.launch({
         args: [...chromium.args, "--no-sandbox", "--disable-setuid-sandbox"],
-        executablePath: await chromium.executablePath(
-            "https://github.com/Sparticuz/chromium/releases/download/v133.0.0/chromium-v133.0.0-pack.tar"
-        ),
+        executablePath: process.env.CHROME_EXECUTABLE_PATH //specify the chrome.exe path in .env
+            || await chromium.executablePath(
+                "https://github.com/Sparticuz/chromium/releases/download/v133.0.0/chromium-v133.0.0-pack.tar"
+            ),
         defaultViewport: chromium.defaultViewport,
         headless: chromium.headless,
         ignoreHTTPSErrors: true,
@@ -266,6 +266,7 @@ async function scrapeMotoGPResults(url) {
         console.log("✅ Classification table found!");
 
         // ✅ 5. Extract classification data
+        console.log(`🔍 Search for rows in classification table`);
         results = await page.evaluate(() => {
             const rows = Array.from(document.querySelectorAll('.results-table__table tbody .results-table__body-row'));
             console.log(`📌 Found ${rows.length} rows in the classification table.`);

@@ -11,9 +11,10 @@ const authMiddleware = require('../middleware/authMiddleware');
 router.get('/championship/:championship_id/lineups/:race_id', authMiddleware, async (req, res) => {
   const { championship_id, race_id } = req.params;
   const user_id = req.username;
+  const allCalendar = req.query.allCalendar == 'true'
 
   try {
-    const { data, error } = await db
+    let query = db
       .from('lineups')
       .select(`id,
                race_rider_id(id,first_name, last_name, number),
@@ -22,8 +23,13 @@ router.get('/championship/:championship_id/lineups/:race_id', authMiddleware, as
                user_id,
                calendar_id`)
       .eq('championship_id', championship_id)
-      .eq('user_id', user_id)
-      .eq('calendar_id', race_id);
+      .eq('user_id', user_id);
+
+    if (!allCalendar) {
+      query = query.eq('calendar_id', race_id);
+    }
+
+    const { data, error } = await query.select();
 
     if (error) {
       console.error("Error fetching lineup:", error);

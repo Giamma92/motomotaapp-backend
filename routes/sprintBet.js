@@ -48,15 +48,20 @@ router.put('/championship/:championship_id/sprint_bet', authMiddleware, async (r
 router.get('/championship/:championship_id/sprint_bet/:calendar_id', authMiddleware, async (req, res) => {
   const { championship_id, calendar_id } = req.params;
   const user_id = req.username;
-
+  const allCalendar = req.query.allCalendar == 'true'
+  
   try {
-    const { data, error } = await db
+    let query = db
       .from('sprint_bets')
       .select()
       .eq('championship_id', championship_id)
-      .eq('user_id', user_id)
-      .eq('calendar_id', calendar_id)
-      .select();
+      .eq('user_id', user_id);
+
+      if (!allCalendar) {
+        query = query.eq('calendar_id', calendar_id);
+      }
+
+      const { data, error } = await query.select();
 
     if (error) {
       if (error.message.includes('No rows found')) {
