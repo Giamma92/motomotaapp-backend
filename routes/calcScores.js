@@ -58,15 +58,25 @@ router.get('/championship/:id/calendar/:calendar_id/calc-scores/', async (req, r
 
         let totalScore = qualifyingScore + raceScore;
 
-        if (sprintBet?.position === sprintBetResult?.sprint_position) {
+        if (+sprintBet?.position == +sprintBetResult?.sprint_position ||
+            +sprintBet?.position == (+sprintBetResult?.sprint_position - 1)
+        ) {
             totalScore += sprintBetScore;
-        } else if (!!sprintBet && sprintBet.position !== sprintBetResult?.sprint_position) {
+        } else if (!!sprintBet && 
+            +sprintBet.position != +sprintBetResult?.sprint_position &&
+            +sprintBet.position != (+sprintBetResult?.sprint_position - 1)
+        ) {
             totalScore -= Math.floor(sprintBetScore/2);
         }
 
-        if (raceBet?.position === raceBetResult?.race_position) {
+        if (+raceBet?.position == +raceBetResult?.race_position ||
+            +raceBet?.position == (+raceBetResult?.race_position - 1)
+        ) {
             totalScore += raceBetScore;
-        } else if (!!raceBet && raceBet.position !== raceBetResult?.race_position) {
+        } else if (!!raceBet && 
+            +raceBet.position != +raceBetResult?.race_position &&
+            +raceBet.position != (+raceBetResult?.race_position - 1)
+        ) {
             totalScore -= Math.floor(raceBetScore/2);
         }
 
