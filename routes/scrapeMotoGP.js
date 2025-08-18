@@ -19,9 +19,11 @@ router.get('/championship/:id/calendar/:calendar_id/motogp-results/', async (req
     
     const calendarId = req.params.calendar_id;
     const calendarRace = await loadCalendarRace(calendarId);
+    if (calendarRace == null) 
+        return res.status(500).json({ error: 'No calendar race found with provided id' });
     const calendarCountry = calendarRace?.race_id?.country ?? 'unknown';
     if (calendarCountry == 'unknown') 
-        return res.status(500).json({ error: 'No calendar race found with provided id' });
+        return res.status(500).json({ error: 'No country code found for the calendar race' });
 
     const riders = await loadChampionshipRiders(championshipId);
 

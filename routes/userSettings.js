@@ -10,7 +10,7 @@ router.get('/user/settings', authMiddleware, async (req, res) => {
       // Fetch user settings from the database
       const { data, error } = await db
         .from('user_settings')
-        .select('championship_id')
+        .select('championship_id, language')
         .eq('user_id', username)
         .maybeSingle();
   
@@ -33,33 +33,44 @@ router.get('/user/settings', authMiddleware, async (req, res) => {
 router.put('/user/settings', authMiddleware, async (req, res) => {
     try {
       const username = req.username; // Assuming the authenticated user ID is available in req.user
-      const { championship_id } = req.body;
+      const { championship_id, language } = req.body;
 
-      console.log("Update user: " + username + ", championship: " + championship_id)
+      console.log("Update user: " + username + ", championship: " + championship_id + ", language: " + language)
   
-      if (!championship_id) {
-        return res.status(400).json({ error: 'championship_id is required' });
+      if (championship_id === undefined && language === undefined) {
+        return res.status(400).json({ error: 'At least one of championship_id or language is required' });
       }
   
-      // Check if the championship exists
-      const { data: championship, error: championshipError } = await db
-        .from('championships')
-        .select('id')
-        .eq('id', championship_id)
-        .maybeSingle();
+      // If championship_id provided, validate it exists
+      if (championship_id !== undefined) {
+        const { data: championship, error: championshipError } = await db
+          .from('championships')
+          .select('id')
+          .eq('id', championship_id)
+          .maybeSingle();
   
-      if (championshipError) {
-        return res.status(500).json({ error: championshipError.message });
+        if (championshipError) {
+          return res.status(500).json({ error: championshipError.message });
+        }
+        if (!championship) {
+          return res.status(404).json({ error: 'Championship not found' });
+        }
       }
-      if (!championship) {
-        return res.status(404).json({ error: 'Championship not found' });
+
+      // Optional: simple validation for language
+      if (language !== undefined && typeof language !== 'string') {
+        return res.status(400).json({ error: 'language must be a string' });
       }
   
       // Update or insert user_settings
+      const payload = { user_id: username };
+      if (championship_id !== undefined) payload.championship_id = championship_id;
+      if (language !== undefined) payload.language = language;
+
       const { data, error } = await db
         .from('user_settings')
-        .upsert({ user_id: username, championship_id }, { onConflict: ['user_id'] })
-        .select()
+        .upsert(payload, { onConflict: ['user_id'] })
+        .select('user_id, championship_id, language')
         .maybeSingle();
   
       if (error) {
