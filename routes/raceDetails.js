@@ -22,7 +22,7 @@ router.get('/championship/:championship_id/race-details/:calendar_id', authMiddl
                     user_id(first_name,last_name),
                     race_rider_id(first_name, last_name,number),
                     qualifying_rider_id(first_name, last_name,number),
-                    inserted_at`)
+                    inserted_at,modified_at`)
             .eq('championship_id', championshipId)
             .eq('calendar_id', calendarId);
         
@@ -41,7 +41,7 @@ router.get('/championship/:championship_id/race-details/:calendar_id', authMiddl
                     rider_id(first_name, last_name,number),
                     position,
                     points,
-                    inserted_at,
+                    inserted_at,modified_at,
                     outcome`)
             .eq('championship_id', championshipId)
             .eq('calendar_id', calendarId);
@@ -61,7 +61,7 @@ router.get('/championship/:championship_id/race-details/:calendar_id', authMiddl
                 rider_id(first_name, last_name,number),
                 position,
                 points,
-                inserted_at,
+                inserted_at,modified_at,
                 outcome`)
             .eq('championship_id', championshipId)
             .eq('calendar_id', calendarId);
