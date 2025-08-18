@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const authMiddleware = require('../middleware/authMiddleware');
 const db = require('../models/db');
 
 // Public endpoint to fetch translations for a language code
@@ -50,6 +51,52 @@ router.get('/i18n/:code', async (req, res) => {
     return res.json(dictionary);
   } catch (err) {
     return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+/**
+ * PUT /api/i18n/:code/:namespace/:key/:value
+ * Upserts a new i18n translation.
+ * Expected body: { value }
+ */
+router.put('/i18n/new', authMiddleware, async (req, res) => {
+  const { code, namespace, key, value, description } = req.body;
+
+  try {
+
+    let { data: keyData, error: keyError } = await db
+      .from('i18n_keys')
+      .upsert({
+          namespace: namespace,
+          key: key,
+          description: description
+      }, { onConflict: 'key' })
+      .select();
+
+    if (keyError || keyData.length === 0) {
+      console.error("Error upserting i18n key:", keyError);
+      return res.status(500).json({ error: keyError.message });
+    }
+
+    const { data, error } = await db
+      .from('i18n_translations')
+      .upsert({
+          language_id: code == 'en' ? 1 : 2,
+          key_id: keyData[0].id,
+          value: value,
+          updated_at: new Date().toISOString()
+      })
+      .select();
+
+    if (error) {
+      console.error("Error upserting i18n translation:", error);
+      return res.status(500).json({ error: error.message });
+    }
+    
+    res.status(201).json(data[0]);
+  } catch (err) {
+    console.error("Unexpected error in i18n translation endpoint:", err);
+    res.status(500).json({ error: "Internal server error" });
   }
 });
 
