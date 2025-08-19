@@ -77,5 +77,25 @@ router.get('/championship/:championship_id/race_bet/:calendar_id', authMiddlewar
     res.status(500).json({ error: "Internal server error" });
   }
 });
+/**
+ * DELETE /api/championship/:championship_id/race_bet/:calendar_id/:rider_id
+ * Deletes a race bet for current user and calendar
+ * Query params: calendar_id, rider_id
+ */
+router.delete('/championship/:championship_id/race_bet/:calendar_id/:rider_id',
+  authMiddleware,
+  async (req, res) => {
+    const { championship_id, calendar_id, rider_id } = req.params;
+    const user_id = req.username;
+    const { error } = await db
+      .from('race_bets')
+      .delete()
+      .eq('championship_id', championship_id)
+      .eq('calendar_id', calendar_id)
+      .eq('user_id', user_id)
+      .eq('rider_id', rider_id);
+    if (error) return res.status(500).json({ error: error.message });
+    res.status(204).send();
+});
 
 module.exports = router;
