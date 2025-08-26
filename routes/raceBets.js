@@ -12,33 +12,68 @@ const authMiddleware = require('../middleware/authMiddleware');
 router.put('/championship/:championship_id/race_bet', authMiddleware, async (req, res) => {
   const { championship_id } = req.params;
   const user_id = req.username;
-  const { position, points, rider_id, calendar_id } = req.body;
-  
-  try {
-    const { data, error } = await db
-      .from('race_bets')
-      .upsert({
-          championship_id: championship_id,
-          calendar_id: calendar_id,
-          user_id: user_id,
-          rider_id: rider_id,
-          position: position,
-          points: points,
-          modified_at: new Date().toISOString()
-      }, { onConflict: 'championship_id, user_id, calendar_id, rider_id' })
-      .select();
+  let { position, points, rider_id, calendar_id } = req.body;
 
-    if (error) {
-      console.error("Error upserting race bet:", error);
-      return res.status(500).json({ error: error.message });
-    }
-    
-    res.status(201).json(data[0]);
-  } catch (err) {
-    console.error("Unexpected error in race bet endpoint:", err);
-    res.status(500).json({ error: "Internal server error" });
+  // Ensure points is a positive integer
+  points = parseInt(points, 10);
+  if (!Number.isInteger(points) || points < 1) {
+    return res.status(400).json({ error: 'Points must be a positive integer.' });
   }
+
+  // Check lineup to disallow betting on your race rider
+  const { data: lineup, error: lineupError } = await db
+    .from('lineups')
+    .select('race_rider_id')
+    .eq('championship_id', championship_id)
+    .eq('user_id', user_id)
+    .eq('calendar_id', calendar_id)
+    .single();
+  if (lineupError) return res.status(500).json({ error: lineupError.message });
+  if (lineup && lineup.race_rider_id === rider_id) {
+    return res.status(400).json({ error: 'Cannot bet on your current race rider.' });
+  }
+
+  // Get configuration values
+  const { data: config, error: configError } = await db
+    .from('configuration')
+    .select('bets_limit_points, bets_limit_driver, bets_limit_race')
+    .eq('championship_id', championship_id)
+    .single();
+  if (configError) return res.status(500).json({ error: configError.message });
+
+  // Load existing bets for user/championship
+  const { data: existingBets, error: betsError } = await db
+    .from('race_bets')
+    .select('calendar_id, rider_id, points')
+    .eq('championship_id', championship_id)
+    .eq('user_id', user_id);
+  if (betsError) return res.status(500).json({ error: betsError.message });
+
+  // Points cap
+  const totalPoints = existingBets.reduce((sum, b) => sum + b.points, 0);
+  if (config.bets_limit_points && totalPoints + points > config.bets_limit_points) {
+    return res.status(400).json({ error: 'Insufficient remaining points.' });
+  }
+
+  // Max bets per race
+  const betsThisRace = existingBets.filter(b => b.calendar_id === calendar_id);
+  if (config.bets_limit_race && betsThisRace.length >= config.bets_limit_race) {
+    return res.status(400).json({ error: 'Maximum bets reached for this race.' });
+  }
+
+  // Max bets per rider
+  const betsThisRider = existingBets.filter(b => b.rider_id === rider_id);
+  if (config.bets_limit_driver && betsThisRider.length >= config.bets_limit_driver) {
+    return res.status(400).json({ error: 'Maximum bets reached for this rider.' });
+  }
+
+  // If everything is valid, proceed with upsert
+  const { data, error } = await db.from('race_bets').upsert({ championship_id, calendar_id, user_id, rider_id, position, points, modified_at: new Date().toISOString() }, { onConflict: 'championship_id, user_id, calendar_id, rider_id' }).select();
+  if (error) return res.status(500).json({ error: error.message });
+
+  res.status(201).json(data[0]);
 });
+
 
 /**
  * GET /api/championship/:championship_id/race_bet
