@@ -27,6 +27,7 @@ const authMiddleware = (req, res, next) => {
     // Optionally attach decoded info (like user ID) to the request object
     req.userId = decoded.userId;
     req.username = decoded.username;
+    req.roles = decoded.roles;
     next();
   });
 };

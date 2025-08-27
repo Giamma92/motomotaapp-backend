@@ -2,8 +2,9 @@ const express = require('express');
 const router = express.Router();
 const db = require('../models/db');
 const authMiddleware = require('../middleware/authMiddleware');
+const authorizeRoles = require('../middleware/authorizeRoles');
 
-router.get('/championship/:id/calendar/:calendar_id/calc-scores/', async (req, res) => {
+router.get('/championship/:id/calendar/:calendar_id/calc-scores/', authMiddleware, authorizeRoles('Admin'), async (req, res) => {
     const championship_id = req.params.id;
     const calendar_id = req.params.calendar_id;
     const results = [];

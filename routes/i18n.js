@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const authMiddleware = require('../middleware/authMiddleware');
+const authorizeRoles = require('../middleware/authorizeRoles');
 const db = require('../models/db');
 
 // Public endpoint to fetch translations for a language code
@@ -59,7 +60,7 @@ router.get('/i18n/:code', async (req, res) => {
  * Upserts a new i18n translation.
  * Expected body: { value }
  */
-router.put('/i18n/new', authMiddleware, async (req, res) => {
+router.put('/i18n/new', authMiddleware, authorizeRoles('Admin'), async (req, res) => {
   const { code, namespace, key, value, description } = req.body;
 
   try {
@@ -85,7 +86,7 @@ router.put('/i18n/new', authMiddleware, async (req, res) => {
           key_id: keyData[0].id,
           value: value,
           updated_at: new Date().toISOString()
-      })
+      }, { onConflict: "language_id,key_id" })
       .select();
 
     if (error) {
