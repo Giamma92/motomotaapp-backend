@@ -58,6 +58,96 @@ router.put('/championship/:championship_id/lineups', authMiddleware, async (req,
   const { calendar_id, race_rider_id, qualifying_rider_id } = req.body;
   
   try {
+    // Get the formation_limit_driver from championship configuration
+    const { data: configData, error: configError } = await db
+      .from('configuration')
+      .select('formation_limit_driver')
+      .eq('championship_id', championshipId)
+      .single();
+
+    if (configError) {
+      console.error("Error fetching championship configuration:", configError);
+      return res.status(500).json({ error: configError.message });
+    }
+
+    if (!configData || !configData.formation_limit_driver) {
+      console.error("No formation_limit_driver found in championship configuration");
+      return res.status(500).json({ error: "Championship configuration not found" });
+    }
+
+    const formationLimit = configData.formation_limit_driver;
+
+    // Check if qualifying rider and race rider are different
+    if (qualifying_rider_id === race_rider_id) {
+      return res.status(400).json({ 
+        error: "Invalid lineup configuration", 
+        details: {
+          message: "Qualifying rider and race rider must be different"
+        }
+      });
+    }
+
+    // Get all lineups for the current championship to count rider appearances
+    const { data: allLineups, error: lineupsError } = await db
+      .from('lineups')
+      .select('race_rider_id, qualifying_rider_id')
+      .eq('championship_id', championshipId)
+      .eq('user_id', userId);
+
+    if (lineupsError) {
+      console.error("Error fetching existing lineups:", lineupsError);
+      return res.status(500).json({ error: lineupsError.message });
+    }
+
+    // Count how many times each rider appears in qualifying and race positions
+    const riderCounts = new Map();
+
+    // Count existing lineups
+    allLineups.forEach(lineup => {
+      // Count qualifying rider
+      if (lineup.qualifying_rider_id) {
+        const currentCount = riderCounts.get(lineup.qualifying_rider_id) || 0;
+        riderCounts.set(lineup.qualifying_rider_id, currentCount + 1);
+      }
+      
+      // Count race rider
+      if (lineup.race_rider_id) {
+        const currentCount = riderCounts.get(lineup.race_rider_id) || 0;
+        riderCounts.set(lineup.race_rider_id, currentCount + 1);
+      }
+    });
+
+    // Add the new lineup riders to the count
+    if (qualifying_rider_id) {
+      const currentCount = riderCounts.get(qualifying_rider_id) || 0;
+      riderCounts.set(qualifying_rider_id, currentCount + 1);
+    }
+    
+    if (race_rider_id) {
+      const currentCount = riderCounts.get(race_rider_id) || 0;
+      riderCounts.set(race_rider_id, currentCount + 1);
+    }
+
+    // Check if any rider exceeds the formation limit
+    const exceededRiders = [];
+    riderCounts.forEach((count, riderId) => {
+      if (count > formationLimit) {
+        exceededRiders.push({ riderId, count });
+      }
+    });
+
+    if (exceededRiders.length > 0) {
+      return res.status(400).json({ 
+        error: "Formation limit exceeded", 
+        details: {
+          exceededRiders,
+          formationLimit,
+          message: `The following riders exceed the formation limit of ${formationLimit}: ${exceededRiders.map(r => `Rider ${r.riderId} (${r.count} times)`).join(', ')}`
+        }
+      });
+    }
+
+    // Proceed with the upsert if validation passes
     const { data, error } = await db
       .from('lineups')
       .upsert({
