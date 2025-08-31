@@ -11,20 +11,33 @@ const authMiddleware = require('../middleware/authMiddleware');
 router.get('/championship/:championship_id/race-details/:calendar_id', authMiddleware, async (req, res) => {
     const championshipId = req.params.championship_id;
     const calendarId = req.params.calendar_id;
+    const allCalendar = req.query.allCalendar == 'true';
+    const allUsers = req.query.allUsers == 'true';
+    const user_id = req.username;
 
     try {
         // Query lineups results for the given race and championship
-        const { data: lineups, error: lineupsError } = await db
+        let queryLineups = db
             .from('lineups')
-            .select(`id,
-                    championship_id,
-                    calendar_id(race_id(name,location)),
-                    user_id(first_name,last_name),
-                    race_rider_id(first_name, last_name,number),
-                    qualifying_rider_id(first_name, last_name,number),
-                    inserted_at,modified_at`)
+            .select()
             .eq('championship_id', championshipId)
-            .eq('calendar_id', calendarId);
+
+        if (!allCalendar) {
+            queryLineups = queryLineups.eq('calendar_id', calendarId);
+        }
+
+        if (!allUsers) {
+            queryLineups = queryLineups.eq('user_id', user_id);
+        }
+
+        const { data: lineups, error: lineupsError } = await queryLineups.select(`
+            id,
+            championship_id,
+            calendar_id(race_id(name,location)),
+            user_id(first_name,last_name),
+            race_rider_id(id,first_name, last_name,number),
+            qualifying_rider_id(id,first_name, last_name,number),
+            inserted_at,modified_at`);
         
         if (lineupsError) {
             console.error('Error fetching lineups:', lineupsError);
@@ -32,19 +45,30 @@ router.get('/championship/:championship_id/race-details/:calendar_id', authMiddl
         }
 
         // Query sprint-bet results for the given race and championship
-        const { data: sprints, error: sprintsError } = await db
+        let querySprintBets = db
             .from('sprint_bets')
-            .select(`id,
-                    championship_id,
-                    calendar_id(race_id(name,location)),
-                    user_id(first_name,last_name),
-                    rider_id(first_name, last_name,number),
-                    position,
-                    points,
-                    inserted_at,modified_at,
-                    outcome`)
-            .eq('championship_id', championshipId)
-            .eq('calendar_id', calendarId);
+            .select()
+            .eq('championship_id', championshipId);
+
+        if (!allCalendar) {
+            querySprintBets = querySprintBets.eq('calendar_id', calendarId).eq('user_id', user_id);
+        }
+
+        if (!allUsers) {
+            querySprintBets = querySprintBets.eq('user_id', user_id);
+        }
+
+        const { data: sprints, error: sprintsError } = await querySprintBets.select(`id,
+                championship_id,
+                calendar_id(race_id(name,location)),
+                user_id(first_name,last_name),
+                rider_id(id,first_name, last_name,number),
+                position,
+                points,
+                inserted_at,modified_at,
+                outcome`
+        );
+
         
         if (sprintsError) {
             console.error('Error fetching sprint bets:', sprintsError);
@@ -52,19 +76,29 @@ router.get('/championship/:championship_id/race-details/:calendar_id', authMiddl
         }
 
         // Query bet results for the given race and championship
-        const { data: bets, error: betsError } = await db
+        let queryRaceBets = db
             .from('race_bets')
-            .select(`id,
+            .select()
+            .eq('championship_id', championshipId);
+
+        if (!allCalendar) {
+            queryRaceBets = queryRaceBets.eq('calendar_id', calendarId).eq('user_id', user_id);
+        }
+
+        if (!allUsers) {
+            queryRaceBets = queryRaceBets.eq('user_id', user_id);
+        }
+
+        const { data: bets, error: betsError } = await queryRaceBets.select(`
+                id,
                 championship_id,
                 calendar_id(race_id(name,location)),
                 user_id(first_name,last_name),
-                rider_id(first_name, last_name,number),
+                rider_id(id,first_name, last_name,number),
                 position,
                 points,
                 inserted_at,modified_at,
-                outcome`)
-            .eq('championship_id', championshipId)
-            .eq('calendar_id', calendarId);
+                outcome`);
         
         if (betsError) {
             console.error('Error fetching bet results:', betsError);

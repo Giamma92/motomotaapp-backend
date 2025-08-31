@@ -55,6 +55,28 @@ router.get('/i18n/:code', async (req, res) => {
   }
 });
 
+// Public endpoint to fetch recent translations inserted
+// GET /api/i18n/translations/recent
+router.get('/i18n/translations/recent', authMiddleware, authorizeRoles('Admin'), async (req, res) => {
+  try {
+
+    // Fetch translations joined with keys for this language
+    const { data: translations, error: trError } = await db
+      .from('i18n_translations')
+      .select('value,i18n_keys( key,namespace,description),language_id(code, name),updated_at')
+      .order('updated_at', { ascending: false })
+      .limit(10);
+
+    if (trError) {
+      return res.status(500).json({ error: trError.message });
+    }
+
+    return res.json(translations);
+  } catch (err) {
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 /**
  * PUT /api/i18n/:code/:namespace/:key/:value
  * Upserts a new i18n translation.
