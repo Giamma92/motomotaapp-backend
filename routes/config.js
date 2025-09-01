@@ -11,6 +11,7 @@ router.get('/championship/:id/config', authMiddleware, async (req, res) => {
       .from('configuration') 
       .select(`
         id,
+        championship_id(description,start_date,year,is_active),
         session_timeout,
         bets_limit_points,
         bets_limit_sprint_points,
