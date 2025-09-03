@@ -41,6 +41,7 @@ router.get('/championship/:championship_id/calendar/:calendar_id', authMiddlewar
       .from('calendar')
       .select(`
         id,
+        championship_id,
         race_order,
         event_date,
         qualifications_time,

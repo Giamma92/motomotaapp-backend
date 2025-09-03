@@ -3,6 +3,7 @@ const express = require('express');
 const router = express.Router();
 const db = require('../models/db');
 const authMiddleware = require('../middleware/authMiddleware');
+const authorizeRoles = require('../middleware/authorizeRoles');
 
 /**
  * GET /api/championship/:championship_id/race-details/:calendar_id
@@ -51,7 +52,7 @@ router.get('/championship/:championship_id/race-details/:calendar_id', authMiddl
             .eq('championship_id', championshipId);
 
         if (!allCalendar) {
-            querySprintBets = querySprintBets.eq('calendar_id', calendarId).eq('user_id', user_id);
+            querySprintBets = querySprintBets.eq('calendar_id', calendarId);
         }
 
         if (!allUsers) {
@@ -82,7 +83,7 @@ router.get('/championship/:championship_id/race-details/:calendar_id', authMiddl
             .eq('championship_id', championshipId);
 
         if (!allCalendar) {
-            queryRaceBets = queryRaceBets.eq('calendar_id', calendarId).eq('user_id', user_id);
+            queryRaceBets = queryRaceBets.eq('calendar_id', calendarId);
         }
 
         if (!allUsers) {
@@ -113,5 +114,129 @@ router.get('/championship/:championship_id/race-details/:calendar_id', authMiddl
             res.status(500).json({ error: 'Internal server error' });
         }
 });
+
+/**
+ * GET /api/championship/:championship_id/races/:calendar_id/fill-missing-lineups
+ * Copy previous race lineups for users missing a lineup in the current race.
+ */
+router.get('/championship/:championship_id/races/:calendar_id/fill-missing-lineups', authMiddleware, authorizeRoles('Admin'), async (req, res) => {
+    try {
+        const championshipId = req.params.championship_id;
+        const calendarId = req.params.calendar_id;
+    
+        // 1) Current race date
+        const { data: currRace, error: currErr } = await db
+            .from('calendar')
+            .select('id,event_date')
+            .eq('id', calendarId)
+            .single();
+        if (currErr || !currRace) return res.status(404).json({ error: 'Current race not found' });
+    
+        // 2) Previous race in same championship
+        const { data: prevRace, error: prevErr } = await db
+            .from('calendar')
+            .select('id,event_date')
+            .eq('championship_id', championshipId)
+            .lt('event_date', currRace.event_date)
+            .order('event_date', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+        if (prevErr) return res.status(500).json({ error: prevErr.message });
+        if (!prevRace) return res.status(200).json({ inserted: 0, message: 'No previous race found' });
+    
+        // 3) Previous race lineups
+        const { data: prevLineups, error: prevLineupsErr } = await db
+            .from('lineups')
+            .select('user_id,qualifying_rider_id,race_rider_id')
+            .eq('championship_id', championshipId)
+            .eq('calendar_id', prevRace.id);
+        if (prevLineupsErr) return res.status(500).json({ error: prevLineupsErr.message });
+    
+        if (!prevLineups?.length) return res.status(200).json({ inserted: 0, message: 'No previous lineups' });
+    
+        // 4) Existing current race lineups (to avoid duplicates)
+        const { data: currLineups, error: currLineupsErr } = await db
+            .from('lineups')
+            .select('user_id')
+            .eq('championship_id', championshipId)
+            .eq('calendar_id', calendarId);
+        if (currLineupsErr) return res.status(500).json({ error: currLineupsErr.message });
+    
+        const existing = new Set((currLineups ?? []).map(r => r.user_id));
+    
+        // 5) Prepare inserts
+        const rows = prevLineups
+            .filter(r => !existing.has(r.user_id))
+            .map(r => ({
+            championship_id: championshipId,
+            calendar_id: calendarId,
+            user_id: r.user_id,
+            qualifying_rider_id: r.qualifying_rider_id,
+            race_rider_id: r.race_rider_id,
+            modified_at: new Date().toISOString(),
+            automatically_inserted: true
+            }));
+    
+        if (!rows.length) return res.status(200).json({ inserted: 0, message: 'All users already have lineups' });
+    
+        const { error: insertErr, count } = await db
+            .from('lineups')
+            .insert(rows, { count: 'exact' });
+        if (insertErr) return res.status(500).json({ error: insertErr.message });
+    
+        return res.status(200).json({ inserted: count ?? rows.length });
+        
+    } catch (e) {
+        console.error(e);
+        return res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
+    /**
+   * POST /api/championship/:championship_id/races/:calendar_id/bets/:kind/outcome
+   * Bulk set outcome (true/false) for sprint or race bets of the current race.
+   * kind: "sprint" | "race"
+   * body: { outcome: boolean | "true" | "false" }
+   */
+router.post('/championship/:championship_id/races/:calendar_id/bets/:kind/outcome', authMiddleware, authorizeRoles('Admin'), async (req, res) => {
+    try {
+        const championshipId = req.params.championship_id;
+        const calendarId = req.params.calendar_id;
+        const kind = String(req.params.kind || '').toLowerCase();
+        const rawOutcome = req.body?.outcome;
+        const betIds = Array.isArray(req.body?.betIds) ? req.body.betIds : undefined;
+
+        if (!['sprint', 'race'].includes(kind)) {
+            return res.status(400).json({ error: 'Invalid kind. Use "sprint" or "race".' });
+        }
+
+        const outcome =
+        typeof rawOutcome === 'boolean'
+            ? rawOutcome
+            : String(rawOutcome).toLowerCase() === 'true';
+
+        const table = kind === 'sprint' ? 'sprint_bets' : 'race_bets';
+
+        const query = db
+            .from(table)
+            .update({ outcome: outcome ? 'true' : 'false' })
+            .eq('championship_id', championshipId)
+            .eq('calendar_id', calendarId)
+
+        if (betIds?.length) {
+            query = query.in('id', betIds);  // <-- only selected bets
+        }
+
+        const { data, error } = await query.select('id');
+
+        if (error) return res.status(500).json({ error: error.message });
+
+        return res.status(200).json({ updated: data?.length ?? 0 });
+    } catch (e) {
+        console.error(e);
+        return res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
 
 module.exports = router;
