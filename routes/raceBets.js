@@ -50,7 +50,7 @@ router.put('/championship/:championship_id/race_bet', authMiddleware, async (req
   if (betsError) return res.status(500).json({ error: betsError.message });
 
   // Points cap
-  const totalPoints = existingBets.reduce((sum, b) => sum + b.points, 0);
+  const totalPoints = existingBets.reduce((sum, b) => b.calendar_id === calendar_id ? sum + b.points : sum + 0);
   if (config.bets_limit_points && totalPoints + points > config.bets_limit_points) {
     return res.status(400).json({ error: 'Insufficient remaining points.' });
   }

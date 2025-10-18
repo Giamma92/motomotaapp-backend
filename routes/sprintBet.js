@@ -46,7 +46,7 @@ router.put('/championship/:championship_id/sprint_bet', authMiddleware, async (r
     }
 
     // Calculate total points already used in sprint bets
-    const totalPoints = existingBets.reduce((sum, b) => sum + b.points, 0);
+    const totalPoints = existingBets.reduce((sum, b) => b.calendar_id === calendar_id ? sum + b.points : sum + 0);
     if (config.bets_limit_sprint_points && totalPoints + points > config.bets_limit_sprint_points) {
       return res.status(400).json({
         error: `Insufficient remaining points. You have ${config.bets_limit_sprint_points - totalPoints} points left.`

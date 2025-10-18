@@ -40,7 +40,7 @@ router.get('/championship/:championship_id/lineups/:race_id', authMiddleware, as
       return res.status(404).json({ error: "Lineup not found" });
     }
 
-    res.status(200).json(data[0]);
+    res.status(200).json(data);
   } catch (err) {
     console.error("Unexpected error in lineups endpoint:", err);
     res.status(500).json({ error: "Internal server error" });
