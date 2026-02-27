@@ -15,8 +15,15 @@ router.put('/championship/:championship_id/sprint_bet', authMiddleware, async (r
   const user_id = req.username;
   let { position, points, rider_id, calendar_id } = req.body;
 
+  calendar_id = Number(calendar_id);
+  rider_id = Number(rider_id);
+  position = Number(position);
+
   // Ensure points is a positive integer (no zeros allowed)
   points = parseInt(points, 10);
+  if (!Number.isInteger(calendar_id) || !Number.isInteger(rider_id) || !Number.isInteger(position)) {
+    return res.status(400).json({ error: 'calendar_id, rider_id and position must be integers.' });
+  }
   if (!Number.isInteger(points) || points < 1) {
     return res.status(400).json({ error: 'Points must be a positive integer.' });
   }
@@ -46,7 +53,10 @@ router.put('/championship/:championship_id/sprint_bet', authMiddleware, async (r
     }
 
     // Calculate total points already used in sprint bets
-    const totalPoints = existingBets.reduce((sum, b) => b.calendar_id === calendar_id ? sum + b.points : sum + 0);
+    const totalPoints = existingBets.reduce(
+      (sum, bet) => (Number(bet.calendar_id) === calendar_id ? sum + Number(bet.points || 0) : sum),
+      0
+    );
     if (config.bets_limit_sprint_points && totalPoints + points > config.bets_limit_sprint_points) {
       return res.status(400).json({
         error: `Insufficient remaining points. You have ${config.bets_limit_sprint_points - totalPoints} points left.`
@@ -54,7 +64,7 @@ router.put('/championship/:championship_id/sprint_bet', authMiddleware, async (r
     }
 
     // Check the number of sprint bets already placed on this race
-    const betsThisRace = existingBets.filter(b => b.calendar_id === calendar_id);
+    const betsThisRace = existingBets.filter(bet => Number(bet.calendar_id) === calendar_id);
     if (config.bets_limit_sprint_race && betsThisRace.length >= config.bets_limit_sprint_race) {
       return res.status(400).json({
         error: `Maximum number of sprint bets (${config.bets_limit_sprint_race}) reached for this race.`
@@ -62,7 +72,7 @@ router.put('/championship/:championship_id/sprint_bet', authMiddleware, async (r
     }
 
     // Check the number of bets the user has placed on this rider
-    const betsThisRider = existingBets.filter(b => b.rider_id === rider_id);
+    const betsThisRider = existingBets.filter(bet => Number(bet.rider_id) === rider_id);
     if (config.bets_limit_sprint_driver && betsThisRider.length >= config.bets_limit_sprint_driver) {
       return res.status(400).json({
         error: `Maximum number of sprint bets (${config.bets_limit_sprint_driver}) reached for this rider.`
@@ -93,8 +103,6 @@ router.put('/championship/:championship_id/sprint_bet', authMiddleware, async (r
     res.status(500).json({ error: 'Internal server error' });
   }
 });
-
-module.exports = router;
 
 
 /**
