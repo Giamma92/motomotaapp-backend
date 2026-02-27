@@ -146,6 +146,7 @@ async function loadFantasyTeams(championshipId) {
                     name,
                     user_id(id,email,first_name,last_name),
                     official_rider_1(id,first_name,last_name,number),
+                official_rider_2(id,first_name,last_name,number),
                     reserve_rider(id,first_name,last_name,number)`)
             .eq('championship_id', championshipId);
 

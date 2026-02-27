@@ -16,6 +16,7 @@ router.get('/championship/:championship_id/fantasy_team', authMiddleware, async 
                     name,
                     team_image,
                     official_rider_1(id,first_name,last_name,number),
+                    official_rider_2(id,first_name,last_name,number),
                     reserve_rider(id,first_name,last_name,number)`)
             .eq('championship_id', championshipId)
             .eq('user_id', username)
@@ -50,6 +51,7 @@ router.get('/championship/:championship_id/fantasy_teams', authMiddleware, async
                     user_id(id,email,first_name,last_name),
                     team_image,
                     official_rider_1(id,first_name,last_name,number),
+                    official_rider_2(id,first_name,last_name,number),
                     reserve_rider(id,first_name,last_name,number)`)
             .eq('championship_id', championshipId);
 

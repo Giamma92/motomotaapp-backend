@@ -8,24 +8,24 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "build": "echo \"No build step required\"",
     "start": "node index.js",
-    "dev": "nodemon app.js"
+    "dev": "nodemon index.js"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "description": "",
   "dependencies": {
-    "@sparticuz/chromium-min": "^133.0.0",
-    "@supabase/supabase-js": "^2.48.1",
-    "cors": "^2.8.5",
-    "dotenv": "^16.4.7",
-    "express": "^4.21.2",
-    "jsonwebtoken": "^9.0.2",
-    "pg": "^8.13.1",
-    "puppeteer-core": "^24.4.0"
+    "@sparticuz/chromium-min": "^143.0.4",
+    "@supabase/supabase-js": "^2.98.0",
+    "cors": "^2.8.6",
+    "dotenv": "^17.3.1",
+    "express": "^5.2.1",
+    "jsonwebtoken": "^9.0.3",
+    "pg": "^8.19.0",
+    "puppeteer-core": "^24.37.5"
   },
   "devDependencies": {
-    "nodemon": "^3.1.10",
-    "supabase": "^2.39.2"
+    "nodemon": "^3.1.14",
+    "supabase": "^2.76.15"
   }
 }

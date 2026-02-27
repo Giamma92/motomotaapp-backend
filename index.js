@@ -54,6 +54,20 @@ app.get('/', (req, res) => {
   res.send('MotoMota backend is running!');
 });
 
+// 404 handler
+app.use((req, res) => {
+  res.status(404).json({ error: 'Not found' });
+});
+
+// Centralized error handler
+app.use((err, req, res, next) => {
+  console.error('Unhandled error:', err);
+  if (res.headersSent) {
+    return next(err);
+  }
+  res.status(500).json({ error: 'Internal server error' });
+});
+
 // Add more endpoints (teams, races, leaderboard) here...
 
 // Start server
