@@ -92,7 +92,8 @@ router.put('/championship/:championship_id/lineups', authMiddleware, async (req,
       .from('lineups')
       .select('race_rider_id, qualifying_rider_id')
       .eq('championship_id', championshipId)
-      .eq('user_id', userId);
+      .eq('user_id', userId)
+      .neq('calendar_id', calendar_id);
 
     if (lineupsError) {
       console.error("Error fetching existing lineups:", lineupsError);
@@ -156,6 +157,7 @@ router.put('/championship/:championship_id/lineups', authMiddleware, async (req,
           user_id: userId,
           race_rider_id: race_rider_id,
           qualifying_rider_id: qualifying_rider_id,
+          automatically_inserted: false,
           modified_at: new Date().toISOString()
       }, { onConflict: 'championship_id, user_id, calendar_id' })
       .select();
