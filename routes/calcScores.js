@@ -4,6 +4,11 @@ const router = express.Router();
 const db = require('../models/db');
 const authMiddleware = require('../middleware/authMiddleware');
 const authorizeRoles = require('../middleware/authorizeRoles');
+const {
+    DEFAULT_CHAMPIONSHIP_TIMEZONE,
+    getChampionshipWindow,
+    normalizeTimeZone
+} = require('../utils/championshipTime');
 
 router.get('/championship/:id/calendar/:calendar_id/calc-scores/', authMiddleware, authorizeRoles('Admin'), async (req, res) => {
     const parsed = parseIds(req.params.id, req.params.calendar_id);
@@ -16,7 +21,10 @@ router.get('/championship/:id/calendar/:calendar_id/calc-scores/', authMiddlewar
         return res.status(result.status || 500).json({ error: result.error || 'Failed to calculate standings' });
     }
 
-    res.json(result.results.map(toLegacyResponse));
+    res.json({
+        results: result.results.map(toLegacyResponse),
+        meta: buildScoringMeta(result.scoringContext)
+    });
 });
 
 router.post('/championship/:id/calendar/:calendar_id/recalculate-scores/', authMiddleware, authorizeRoles('Admin'), async (req, res) => {
@@ -35,7 +43,10 @@ router.post('/championship/:id/calendar/:calendar_id/recalculate-scores/', authM
         return res.status(recalculated.status || 500).json({ error: recalculated.error || 'Failed to recalculate standings' });
     }
 
-    res.json(recalculated.results.map(toLegacyResponse));
+    res.json({
+        results: recalculated.results.map(toLegacyResponse),
+        meta: buildScoringMeta(recalculated.scoringContext)
+    });
 });
 
 function parseIds(championshipIdRaw, calendarIdRaw) {
@@ -56,14 +67,16 @@ async function calculateAndPersistStandings(championshipId, calendarId, { force 
         raceBets,
         sprintBets,
         motogpResults,
-        existingRun
+        existingRun,
+        scoringContext
     ] = await Promise.all([
         loadFantasyTeams(championshipId),
         loadLineups(championshipId, calendarId),
         loadRaceBets(championshipId, calendarId),
         loadSprintBets(championshipId, calendarId),
         loadMotoGPResults(championshipId, calendarId),
-        loadStandingsRun(championshipId, calendarId)
+        loadStandingsRun(championshipId, calendarId),
+        loadScoringContext(championshipId, calendarId)
     ]);
 
     if (!Array.isArray(fantasyTeams)) {
@@ -81,6 +94,9 @@ async function calculateAndPersistStandings(championshipId, calendarId, { force 
     if (!Array.isArray(motogpResults)) {
         return { ok: false, status: 500, error: 'Fail to load motogp results' };
     }
+    if (!scoringContext) {
+        return { ok: false, status: 500, error: 'Fail to load scoring context' };
+    }
     if (motogpResults.length === 0) {
         return {
             ok: false,
@@ -94,7 +110,7 @@ async function calculateAndPersistStandings(championshipId, calendarId, { force 
         return { ok: false, status: 500, error: 'Fail to prepare fallback lineups for scoring' };
     }
 
-    const outcomesSynced = await syncBetOutcomes(championshipId, calendarId, sprintBets, raceBets, motogpResults);
+    const outcomesSynced = await syncBetOutcomes(championshipId, calendarId, sprintBets, raceBets, motogpResults, scoringContext);
     if (!outcomesSynced) {
         return { ok: false, status: 500, error: 'Fail to update bet outcomes' };
     }
@@ -104,7 +120,8 @@ async function calculateAndPersistStandings(championshipId, calendarId, { force 
         lineups: ensuredLineups,
         raceBets,
         sprintBets,
-        motogpResults
+        motogpResults,
+        scoringContext
     });
 
     const results = calculateRaceScores({
@@ -114,7 +131,8 @@ async function calculateAndPersistStandings(championshipId, calendarId, { force 
         lineups: ensuredLineups,
         raceBets,
         sprintBets,
-        motogpResults
+        motogpResults,
+        scoringContext
     });
 
     const sourceHash = computeSourceHash({
@@ -124,12 +142,13 @@ async function calculateAndPersistStandings(championshipId, calendarId, { force 
         lineups: ensuredLineups,
         raceBets,
         sprintBets,
-        motogpResults
+        motogpResults,
+        scoringContext
     });
 
     if (!force && existingRun?.status === 'completed' && existingRun.source_hash === sourceHash) {
         console.log(`Standings already up to date for championship ${championshipId}, calendar ${calendarId}`);
-        return { ok: true, results };
+        return { ok: true, results, scoringContext };
     }
 
     const entriesPayload = results.map(result => ({
@@ -198,7 +217,7 @@ async function calculateAndPersistStandings(championshipId, calendarId, { force 
         last_error: null
     });
 
-    return { ok: true, results };
+    return { ok: true, results, scoringContext };
 }
 
 async function invalidateRaceScores(championshipId, calendarId) {
@@ -245,7 +264,8 @@ function calculateRaceScores({
     lineups,
     raceBets,
     sprintBets,
-    motogpResults
+    motogpResults,
+    scoringContext
 }) {
     const lineupByUser = new Map(lineups.map(lineup => [normalizeUserId(lineup.user_id), lineup]));
     const raceBetByUser = new Map(raceBets.map(bet => [normalizeUserId(bet.user_id), bet]));
@@ -271,21 +291,29 @@ function calculateRaceScores({
             ? resultByRider.get(normalizeEntityId(raceBet.rider_id))
             : null;
 
-        const qualifyingScore = Number(qualifyingResult?.qualifying_points || 0);
-        const raceScore = Number(raceResult?.race_points || 0);
+        const qualifyingScore = scoringContext.qualifyingSettled
+            ? Number(qualifyingResult?.qualifying_points || 0)
+            : 0;
+        const raceScore = scoringContext.raceSettled
+            ? Number(raceResult?.race_points || 0)
+            : 0;
         const sprintBetScore = Number(sprintBet?.points || 0);
         const raceBetScore = Number(raceBet?.points || 0);
 
-        const sprintBetDelta = calculateBetDelta(
-            sprintBet?.position,
-            sprintBetResult?.sprint_position,
-            sprintBetScore
-        );
-        const raceBetDelta = calculateBetDelta(
-            raceBet?.position,
-            raceBetResult?.race_position,
-            raceBetScore
-        );
+        const sprintBetDelta = scoringContext.sprintSettled
+            ? calculateBetDelta(
+                sprintBet?.position,
+                sprintBetResult?.sprint_position,
+                sprintBetScore
+            )
+            : 0;
+        const raceBetDelta = scoringContext.raceSettled
+            ? calculateBetDelta(
+                raceBet?.position,
+                raceBetResult?.race_position,
+                raceBetScore
+            )
+            : 0;
 
         const ownScore = qualifyingScore + raceScore + sprintBetDelta + raceBetDelta;
 
@@ -308,7 +336,8 @@ function calculateRaceScores({
             sprintBetDelta,
             raceBetScore,
             raceBetDelta,
-            ownScore
+            ownScore,
+            scoringContext
         });
 
         return {
@@ -428,6 +457,7 @@ function logCalculationContext(championshipId, calendarId, datasets) {
     console.log('[calcScores] dataset summary', {
         championshipId,
         calendarId,
+        scoringPhase: buildScoringMeta(datasets.scoringContext),
         fantasyTeams: datasets.fantasyTeams?.length ?? 0,
         lineups: datasets.lineups?.length ?? 0,
         raceBets: datasets.raceBets?.length ?? 0,
@@ -456,11 +486,13 @@ function logUserCalculation({
     sprintBetDelta,
     raceBetScore,
     raceBetDelta,
-    ownScore
+    ownScore,
+    scoringContext
 }) {
     console.log('[calcScores] user breakdown', {
         championshipId,
         calendarId,
+        scoringPhase: buildScoringMeta(scoringContext),
         userId,
         teamName,
         automaticallyInserted,
@@ -579,6 +611,107 @@ async function loadFantasyTeams(championshipId) {
         return data || [];
     } catch (err) {
         console.error('Unexpected error fetching fantasy teams:', err);
+        return null;
+    }
+}
+
+function buildScoringMeta(scoringContext) {
+    const phase = getScoringPhaseLabel(scoringContext);
+
+    return {
+        phase,
+        partial: phase !== 'full_race_ready',
+        qualifyingSettled: Boolean(scoringContext?.qualifyingSettled),
+        sprintSettled: Boolean(scoringContext?.sprintSettled),
+        raceSettled: Boolean(scoringContext?.raceSettled),
+        message: getScoringPhaseMessage(phase),
+        timeZone: scoringContext?.timeZone || DEFAULT_CHAMPIONSHIP_TIMEZONE,
+        now: scoringContext?.now || null,
+        qualifyingAt: scoringContext?.qualifyingAt || null,
+        sprintAt: scoringContext?.sprintAt || null,
+        raceAt: scoringContext?.raceAt || null
+    };
+}
+
+function getScoringPhaseLabel(scoringContext) {
+    if (scoringContext?.raceSettled) {
+        return 'full_race_ready';
+    }
+    if (scoringContext?.sprintSettled) {
+        return 'sprint_complete';
+    }
+    if (scoringContext?.qualifyingSettled) {
+        return 'qualifying_complete';
+    }
+    return 'pre_qualifying';
+}
+
+function getScoringPhaseMessage(phase) {
+    switch (phase) {
+        case 'qualifying_complete':
+            return 'Calcolo parziale: conteggiata solo la qualifica. Scommesse sprint e gara non ancora considerate.';
+        case 'sprint_complete':
+            return 'Calcolo parziale: conteggiate qualifica e sprint. Scommesse gara non ancora considerate.';
+        case 'full_race_ready':
+            return 'Calcolo completo: qualifica, sprint e gara sono state considerate.';
+        default:
+            return 'Calcolo preliminare: nessuna sessione della gara risulta ancora maturata.';
+    }
+}
+
+async function loadScoringContext(championshipId, calendarId) {
+    try {
+        const [
+            { data: config, error: configError },
+            { data: calendarRow, error: calendarError }
+        ] = await Promise.all([
+            db
+                .from('configuration')
+                .select('timezone')
+                .eq('championship_id', championshipId)
+                .maybeSingle(),
+            db
+                .from('calendar')
+                .select('id,event_date,qualifications_time,sprint_time,event_time')
+                .eq('championship_id', championshipId)
+                .eq('id', calendarId)
+                .maybeSingle()
+        ]);
+
+        if (configError) {
+            console.error('Error loading championship timezone for calc scores:', configError);
+            return null;
+        }
+        if (calendarError) {
+            console.error('Error loading calendar row for calc scores:', calendarError);
+            return null;
+        }
+        if (!calendarRow) {
+            console.error('Calendar row not found for calc scores', { championshipId, calendarId });
+            return null;
+        }
+
+        const timeZone = normalizeTimeZone(config?.timezone || DEFAULT_CHAMPIONSHIP_TIMEZONE);
+        const window = getChampionshipWindow(calendarRow, timeZone);
+        const now = new Date();
+        const qualifyingAt = window?.lineupsEnd || null;
+        const sprintAt = window?.sprintBetEnd
+            ? new Date(window.sprintBetEnd.getTime() + 30 * 60 * 1000)
+            : null;
+        const raceAt = window?.eventTime || null;
+
+        return {
+            timeZone,
+            now: now.toISOString(),
+            qualifyingAt: qualifyingAt?.toISOString() || null,
+            sprintAt: sprintAt?.toISOString() || null,
+            raceAt: raceAt?.toISOString() || null,
+            qualifyingSettled: Boolean(qualifyingAt && now >= qualifyingAt),
+            sprintSettled: Boolean(sprintAt && now >= sprintAt),
+            raceSettled: Boolean(raceAt && now >= raceAt)
+        };
+    } catch (err) {
+        console.error('Unexpected error loading scoring context for calc scores:', err);
         return null;
     }
 }
@@ -809,27 +942,27 @@ async function loadStandingsRun(championshipId, calendarId) {
     }
 }
 
-async function syncBetOutcomes(championshipId, calendarId, sprintBets, raceBets, motogpResults) {
+async function syncBetOutcomes(championshipId, calendarId, sprintBets, raceBets, motogpResults, scoringContext) {
     try {
         const resultByRider = new Map(motogpResults.map(result => [normalizeEntityId(result.rider_id), result]));
 
-        const sprintUpdates = (sprintBets || []).map(bet => {
+        const sprintUpdates = scoringContext?.sprintSettled ? (sprintBets || []).map(bet => {
             const actual = resultByRider.get(normalizeEntityId(bet.rider_id));
             return {
                 id: bet.id,
                 outcome: isSuccessfulBet(bet.position, actual?.sprint_position) ? 'true' : 'false',
                 modified_at: new Date().toISOString()
             };
-        });
+        }) : [];
 
-        const raceUpdates = (raceBets || []).map(bet => {
+        const raceUpdates = scoringContext?.raceSettled ? (raceBets || []).map(bet => {
             const actual = resultByRider.get(normalizeEntityId(bet.rider_id));
             return {
                 id: bet.id,
                 outcome: isSuccessfulBet(bet.position, actual?.race_position) ? 'true' : 'false',
                 modified_at: new Date().toISOString()
             };
-        });
+        }) : [];
 
         if (sprintUpdates.length > 0) {
             for (const update of sprintUpdates) {
@@ -868,6 +1001,7 @@ async function syncBetOutcomes(championshipId, calendarId, sprintBets, raceBets,
         console.log('[calcScores] bet outcomes synced', {
             championshipId,
             calendarId,
+            scoringPhase: scoringContext,
             sprintBets: sprintUpdates.length,
             raceBets: raceUpdates.length
         });

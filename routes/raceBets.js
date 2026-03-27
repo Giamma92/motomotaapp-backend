@@ -3,6 +3,12 @@ const express = require('express');
 const router = express.Router();
 const db = require('../models/db');
 const authMiddleware = require('../middleware/authMiddleware');
+const {
+  DEFAULT_CHAMPIONSHIP_TIMEZONE,
+  canSubmitRaceBet,
+  formatSqlTimestamp,
+  normalizeTimeZone
+} = require('../utils/championshipTime');
 
 /**
  * POST /api/championship/:championship_id/sprint_bet
@@ -45,10 +51,37 @@ router.put('/championship/:championship_id/race_bet', authMiddleware, async (req
     // Get configuration values
     const { data: config, error: configError } = await db
       .from('configuration')
-      .select('bets_limit_points, bets_limit_driver, bets_limit_race')
+      .select('bets_limit_points, bets_limit_driver, bets_limit_race, timezone')
       .eq('championship_id', championship_id)
       .single();
     if (configError) return res.status(500).json({ error: configError.message });
+
+    const championshipTimeZone = normalizeTimeZone(config.timezone || DEFAULT_CHAMPIONSHIP_TIMEZONE);
+    const modifiedAt = formatSqlTimestamp(new Date(), championshipTimeZone);
+    const { data: calendarRow, error: calendarError } = await db
+      .from('calendar')
+      .select('event_date, qualifications_time, sprint_time, event_time')
+      .eq('championship_id', championship_id)
+      .eq('id', calendar_id)
+      .maybeSingle();
+
+    if (calendarError) {
+      console.error('Error fetching calendar row for race bet window:', calendarError);
+      return res.status(500).json({ error: calendarError.message });
+    }
+
+    if (!calendarRow) {
+      return res.status(404).json({ error: 'Race calendar not found' });
+    }
+
+    if (!canSubmitRaceBet(calendarRow, championshipTimeZone)) {
+      return res.status(400).json({
+        error: 'Race bets are closed for this race.',
+        details: {
+          timezone: championshipTimeZone
+        }
+      });
+    }
 
     // Load existing bets for user/championship
     const { data: existingBets, error: betsError } = await db
@@ -84,7 +117,7 @@ router.put('/championship/:championship_id/race_bet', authMiddleware, async (req
     // If everything is valid, proceed with upsert
     const { data, error } = await db
       .from('race_bets')
-      .upsert({ championship_id, calendar_id, user_id, rider_id, position, points, modified_at: new Date().toISOString() }, { onConflict: 'championship_id, user_id, calendar_id, rider_id' })
+      .upsert({ championship_id, calendar_id, user_id, rider_id, position, points, modified_at: modifiedAt }, { onConflict: 'championship_id, user_id, calendar_id, rider_id' })
       .select();
     if (error) return res.status(500).json({ error: error.message });
 

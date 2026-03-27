@@ -2,6 +2,25 @@ const express = require('express');
 const router = express.Router();
 const authMiddleware = require('../middleware/authMiddleware');
 const db = require('../models/db');
+const {
+  DEFAULT_CHAMPIONSHIP_TIMEZONE,
+  formatYyyyMmDd,
+  normalizeTimeZone
+} = require('../utils/championshipTime');
+
+async function loadChampionshipTimezone(championshipId) {
+  const { data, error } = await db
+    .from('configuration')
+    .select('timezone')
+    .eq('championship_id', championshipId)
+    .maybeSingle();
+
+  if (error) {
+    throw error;
+  }
+
+  return normalizeTimeZone(data?.timezone || DEFAULT_CHAMPIONSHIP_TIMEZONE);
+}
 
 // GET calendar of a specific championship
 router.get('/championship/:id/calendar', authMiddleware, async (req, res) => {
@@ -73,8 +92,8 @@ router.get('/championship/:championship_id/calendar/:calendar_id', authMiddlewar
 router.get('/championship/:championship_id/next-race', authMiddleware, async (req, res) => {
   const championshipId = req.params.championship_id;
   try {
-    // Get today's date as "YYYY-MM-DD"
-    const today = new Date().toISOString().split('T')[0];
+    const championshipTimeZone = await loadChampionshipTimezone(championshipId);
+    const today = formatYyyyMmDd(new Date(), championshipTimeZone);
 
     // Query for races where event_date is greater than or equal to today
     const { data, error } = await db

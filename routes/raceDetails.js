@@ -4,6 +4,11 @@ const router = express.Router();
 const db = require('../models/db');
 const authMiddleware = require('../middleware/authMiddleware');
 const authorizeRoles = require('../middleware/authorizeRoles');
+const {
+    DEFAULT_CHAMPIONSHIP_TIMEZONE,
+    formatSqlTimestamp,
+    normalizeTimeZone
+} = require('../utils/championshipTime');
 
 /**
  * GET /api/championship/:championship_id/race-details/:calendar_id
@@ -38,7 +43,8 @@ router.get('/championship/:championship_id/race-details/:calendar_id', authMiddl
             user_id(id,first_name,last_name),
             race_rider_id(id,first_name, last_name,number),
             qualifying_rider_id(id,first_name, last_name,number),
-            inserted_at,modified_at`);
+            inserted_at,modified_at,
+            automatically_inserted`);
         
         if (lineupsError) {
             console.error('Error fetching lineups:', lineupsError);
@@ -163,6 +169,13 @@ router.get('/championship/:championship_id/races/:calendar_id/fill-missing-lineu
         if (currLineupsErr) return res.status(500).json({ error: currLineupsErr.message });
     
         const existing = new Set((currLineups ?? []).map(r => r.user_id));
+        const { data: config } = await db
+            .from('configuration')
+            .select('timezone')
+            .eq('championship_id', championshipId)
+            .maybeSingle();
+        const championshipTimeZone = normalizeTimeZone(config?.timezone || DEFAULT_CHAMPIONSHIP_TIMEZONE);
+        const modifiedAt = formatSqlTimestamp(new Date(), championshipTimeZone);
     
         // 5) Prepare inserts
         const rows = prevLineups
@@ -173,7 +186,7 @@ router.get('/championship/:championship_id/races/:calendar_id/fill-missing-lineu
             user_id: r.user_id,
             qualifying_rider_id: r.qualifying_rider_id,
             race_rider_id: r.race_rider_id,
-            modified_at: new Date().toISOString(),
+            modified_at: modifiedAt,
             automatically_inserted: true
             }));
     

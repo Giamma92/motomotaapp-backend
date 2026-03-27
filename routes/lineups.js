@@ -3,6 +3,12 @@ const express = require('express');
 const router = express.Router();
 const db = require('../models/db');
 const authMiddleware = require('../middleware/authMiddleware');
+const {
+  DEFAULT_CHAMPIONSHIP_TIMEZONE,
+  canSubmitLineup,
+  formatSqlTimestamp,
+  normalizeTimeZone
+} = require('../utils/championshipTime');
 
 /**
  * GET /api/championship/:championship_id/lineups/:race_id
@@ -61,7 +67,7 @@ router.put('/championship/:championship_id/lineups', authMiddleware, async (req,
     // Get the formation_limit_driver from championship configuration
     const { data: configData, error: configError } = await db
       .from('configuration')
-      .select('formation_limit_driver')
+      .select('formation_limit_driver, timezone')
       .eq('championship_id', championshipId)
       .single();
 
@@ -76,6 +82,33 @@ router.put('/championship/:championship_id/lineups', authMiddleware, async (req,
     }
 
     const formationLimit = configData.formation_limit_driver;
+    const championshipTimeZone = normalizeTimeZone(configData.timezone || DEFAULT_CHAMPIONSHIP_TIMEZONE);
+    const modifiedAt = formatSqlTimestamp(new Date(), championshipTimeZone);
+
+    const { data: calendarRow, error: calendarError } = await db
+      .from('calendar')
+      .select('event_date, qualifications_time, sprint_time, event_time')
+      .eq('championship_id', championshipId)
+      .eq('id', calendar_id)
+      .maybeSingle();
+
+    if (calendarError) {
+      console.error('Error fetching calendar row for lineup window:', calendarError);
+      return res.status(500).json({ error: calendarError.message });
+    }
+
+    if (!calendarRow) {
+      return res.status(404).json({ error: 'Race calendar not found' });
+    }
+
+    if (!canSubmitLineup(calendarRow, championshipTimeZone)) {
+      return res.status(400).json({
+        error: 'Lineups are closed for this race.',
+        details: {
+          timezone: championshipTimeZone
+        }
+      });
+    }
 
     // Check if qualifying rider and race rider are different
     if (qualifying_rider_id === race_rider_id) {
@@ -158,7 +191,7 @@ router.put('/championship/:championship_id/lineups', authMiddleware, async (req,
           race_rider_id: race_rider_id,
           qualifying_rider_id: qualifying_rider_id,
           automatically_inserted: false,
-          modified_at: new Date().toISOString()
+          modified_at: modifiedAt
       }, { onConflict: 'championship_id, user_id, calendar_id' })
       .select();
       
