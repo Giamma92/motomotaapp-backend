@@ -6,6 +6,7 @@ const authMiddleware = require('../middleware/authMiddleware');
 const authorizeRoles = require('../middleware/authorizeRoles');
 const {
     DEFAULT_CHAMPIONSHIP_TIMEZONE,
+    formatSqlTimestamp,
     getChampionshipWindow,
     normalizeTimeZone
 } = require('../utils/championshipTime');
@@ -105,12 +106,25 @@ async function calculateAndPersistStandings(championshipId, calendarId, { force 
         };
     }
 
-    const ensuredLineups = await ensureMissingLineupsForScoring(championshipId, calendarId, fantasyTeams, initialLineups);
+    const ensuredLineups = await ensureMissingLineupsForScoring(
+        championshipId,
+        calendarId,
+        fantasyTeams,
+        initialLineups,
+        scoringContext?.timeZone
+    );
     if (!Array.isArray(ensuredLineups)) {
         return { ok: false, status: 500, error: 'Fail to prepare fallback lineups for scoring' };
     }
 
-    const outcomesSynced = await syncBetOutcomes(championshipId, calendarId, sprintBets, raceBets, motogpResults, scoringContext);
+    const outcomesSynced = await syncBetOutcomes(
+        championshipId,
+        calendarId,
+        sprintBets,
+        raceBets,
+        motogpResults,
+        scoringContext
+    );
     if (!outcomesSynced) {
         return { ok: false, status: 500, error: 'Fail to update bet outcomes' };
     }
@@ -742,8 +756,10 @@ async function loadLineups(championshipId, calendarId) {
     }
 }
 
-async function ensureMissingLineupsForScoring(championshipId, calendarId, fantasyTeams, currentLineups) {
+async function ensureMissingLineupsForScoring(championshipId, calendarId, fantasyTeams, currentLineups, timeZone) {
     try {
+        const championshipTimeZone = normalizeTimeZone(timeZone || DEFAULT_CHAMPIONSHIP_TIMEZONE);
+        const modifiedAt = formatSqlTimestamp(new Date(), championshipTimeZone);
         const existingUserIds = new Set((currentLineups || []).map(lineup => normalizeUserId(lineup.user_id)));
         const missingUserIds = (fantasyTeams || [])
             .map(team => normalizeUserId(team.user_id?.id))
@@ -776,7 +792,7 @@ async function ensureMissingLineupsForScoring(championshipId, calendarId, fantas
             user_id: lineup.user_id,
             qualifying_rider_id: lineup.qualifying_rider_id,
             race_rider_id: lineup.race_rider_id,
-            modified_at: new Date().toISOString(),
+            modified_at: modifiedAt,
             automatically_inserted: true
         }));
 
@@ -944,6 +960,10 @@ async function loadStandingsRun(championshipId, calendarId) {
 
 async function syncBetOutcomes(championshipId, calendarId, sprintBets, raceBets, motogpResults, scoringContext) {
     try {
+        const modifiedAt = formatSqlTimestamp(
+            new Date(),
+            normalizeTimeZone(scoringContext?.timeZone || DEFAULT_CHAMPIONSHIP_TIMEZONE)
+        );
         const resultByRider = new Map(motogpResults.map(result => [normalizeEntityId(result.rider_id), result]));
 
         const sprintUpdates = scoringContext?.sprintSettled ? (sprintBets || []).map(bet => {
@@ -951,7 +971,7 @@ async function syncBetOutcomes(championshipId, calendarId, sprintBets, raceBets,
             return {
                 id: bet.id,
                 outcome: isSuccessfulBet(bet.position, actual?.sprint_position) ? 'true' : 'false',
-                modified_at: new Date().toISOString()
+                modified_at: modifiedAt
             };
         }) : [];
 
@@ -960,7 +980,7 @@ async function syncBetOutcomes(championshipId, calendarId, sprintBets, raceBets,
             return {
                 id: bet.id,
                 outcome: isSuccessfulBet(bet.position, actual?.race_position) ? 'true' : 'false',
-                modified_at: new Date().toISOString()
+                modified_at: modifiedAt
             };
         }) : [];
 

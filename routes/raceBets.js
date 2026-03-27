@@ -176,6 +176,45 @@ router.delete('/championship/:championship_id/race_bet/:calendar_id/:rider_id',
   async (req, res) => {
     const { championship_id, calendar_id, rider_id } = req.params;
     const user_id = req.username;
+
+    try {
+      const { data: config, error: configError } = await db
+        .from('configuration')
+        .select('timezone')
+        .eq('championship_id', championship_id)
+        .single();
+
+      if (configError) {
+        console.error('Error fetching configuration for race bet delete:', configError);
+        return res.status(500).json({ error: configError.message });
+      }
+
+      const championshipTimeZone = normalizeTimeZone(config.timezone || DEFAULT_CHAMPIONSHIP_TIMEZONE);
+      const { data: calendarRow, error: calendarError } = await db
+        .from('calendar')
+        .select('event_date, qualifications_time, sprint_time, event_time')
+        .eq('championship_id', championship_id)
+        .eq('id', calendar_id)
+        .maybeSingle();
+
+      if (calendarError) {
+        console.error('Error fetching calendar row for race bet delete window:', calendarError);
+        return res.status(500).json({ error: calendarError.message });
+      }
+
+      if (!calendarRow) {
+        return res.status(404).json({ error: 'Race calendar not found' });
+      }
+
+      if (!canSubmitRaceBet(calendarRow, championshipTimeZone)) {
+        return res.status(400).json({
+          error: 'Race bets are closed for this race.',
+          details: {
+            timezone: championshipTimeZone
+          }
+        });
+      }
+
     const { error } = await db
       .from('race_bets')
       .delete()
@@ -185,6 +224,10 @@ router.delete('/championship/:championship_id/race_bet/:calendar_id/:rider_id',
       .eq('rider_id', rider_id);
     if (error) return res.status(500).json({ error: error.message });
     res.status(204).send();
+    } catch (err) {
+      console.error('Unexpected error in race bet delete:', err);
+      res.status(500).json({ error: 'Internal server error' });
+    }
 });
 
 module.exports = router;
