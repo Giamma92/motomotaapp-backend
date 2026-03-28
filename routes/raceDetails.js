@@ -10,6 +10,15 @@ const {
     normalizeTimeZone
 } = require('../utils/championshipTime');
 
+function getMotoGPPoints(position) {
+    const table = {
+        1: 25, 2: 20, 3: 16, 4: 13, 5: 11,
+        6: 10, 7: 9, 8: 8, 9: 7, 10: 6,
+        11: 5, 12: 4, 13: 3, 14: 2, 15: 1
+    };
+    return table[Number(position)] ?? 0;
+}
+
 /**
  * GET /api/championship/:championship_id/race-details/:calendar_id
  * Returns the lineups, sprint-bet, and bet results for the given race and championship.
@@ -112,8 +121,34 @@ router.get('/championship/:championship_id/race-details/:calendar_id', authMiddl
             return res.status(500).json({ error: betsError.message });
         }
 
+        const { data: motogpResults, error: motogpResultsError } = await db
+            .from('motogp_results')
+            .select(`
+                id,
+                championship_id,
+                calendar_id,
+                rider_id(id,first_name,last_name,number),
+                qualifying_position,
+                qualifying_points,
+                qualifying_scoring_position,
+                qualifying_scoring_points,
+                qualifying_scoring_source,
+                sprint_position,
+                sprint_points,
+                race_position,
+                race_points
+            `)
+            .eq('championship_id', championshipId)
+            .eq('calendar_id', calendarId)
+            .order('qualifying_position', { ascending: true, nullsFirst: false });
+
+        if (motogpResultsError) {
+            console.error('Error fetching MotoGP stored results:', motogpResultsError);
+            return res.status(500).json({ error: motogpResultsError.message });
+        }
+
          // Return the combined results
-        res.json({ lineups, sprints, bets });
+        res.json({ lineups, sprints, bets, motogpResults });
         } 
         catch (err) {
             console.error('Unexpected error:', err);
@@ -245,6 +280,79 @@ router.post('/championship/:championship_id/races/:calendar_id/bets/:kind/outcom
         if (error) return res.status(500).json({ error: error.message });
 
         return res.status(200).json({ updated: data?.length ?? 0 });
+    } catch (e) {
+        console.error(e);
+        return res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
+router.post('/championship/:championship_id/races/:calendar_id/qualifying-scoring', authMiddleware, authorizeRoles('Admin'), async (req, res) => {
+    try {
+        const championshipId = req.params.championship_id;
+        const calendarId = req.params.calendar_id;
+        const riderId = Number(req.body?.riderId);
+        const scoringPosition = req.body?.qualifyingScoringPosition;
+
+        if (!Number.isFinite(riderId)) {
+            return res.status(400).json({ error: 'Invalid riderId' });
+        }
+
+        const resetRequested = scoringPosition === null || scoringPosition === undefined || String(scoringPosition).trim() === '';
+
+        const { data: existing, error: existingError } = await db
+            .from('motogp_results')
+            .select('id, qualifying_position, qualifying_points')
+            .eq('championship_id', championshipId)
+            .eq('calendar_id', calendarId)
+            .eq('rider_id', riderId)
+            .maybeSingle();
+
+        if (existingError) {
+            return res.status(500).json({ error: existingError.message });
+        }
+
+        if (!existing) {
+            return res.status(404).json({ error: 'MotoGP result not found for rider' });
+        }
+
+        const payload = resetRequested
+            ? {
+                qualifying_scoring_position: existing.qualifying_position,
+                qualifying_scoring_points: existing.qualifying_points ?? 0,
+                qualifying_scoring_source: 'raw_qualifying'
+            }
+            : {
+                qualifying_scoring_position: Number(scoringPosition),
+                qualifying_scoring_points: getMotoGPPoints(Number(scoringPosition)),
+                qualifying_scoring_source: 'admin_override'
+            };
+
+        if (!resetRequested && (!Number.isFinite(payload.qualifying_scoring_position) || payload.qualifying_scoring_position <= 0)) {
+            return res.status(400).json({ error: 'Invalid qualifyingScoringPosition' });
+        }
+
+        const { data, error } = await db
+            .from('motogp_results')
+            .update(payload)
+            .eq('id', existing.id)
+            .select(`
+                id,
+                championship_id,
+                calendar_id,
+                rider_id(id,first_name,last_name,number),
+                qualifying_position,
+                qualifying_points,
+                qualifying_scoring_position,
+                qualifying_scoring_points,
+                qualifying_scoring_source
+            `)
+            .maybeSingle();
+
+        if (error) {
+            return res.status(500).json({ error: error.message });
+        }
+
+        return res.status(200).json({ result: data });
     } catch (e) {
         console.error(e);
         return res.status(500).json({ error: 'Internal server error' });

@@ -16,6 +16,22 @@ const pointsTable = {
 };
 const qPoints = (pos) => pointsTable[pos] ?? 0;
 
+const GRID_POSITION_CANDIDATE_PATHS = [
+    ['grid_position'],
+    ['grid'],
+    ['starting_grid_position'],
+    ['starting_position'],
+    ['start_position'],
+    ['gridPosition'],
+    ['startingGridPosition'],
+    ['startingPosition'],
+    ['startPosition'],
+    ['race', 'grid_position'],
+    ['race', 'gridPosition'],
+    ['race', 'starting_position'],
+    ['race', 'startingPosition']
+];
+
 // ---- HELPERS ----------------------------------------------------------------
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -86,6 +102,55 @@ function adjustQ1(rows) {
         }));
 }
 
+function getNestedValue(source, path) {
+    return path.reduce((current, key) => (current == null ? undefined : current[key]), source);
+}
+
+function extractGridPosition(entry) {
+    for (const path of GRID_POSITION_CANDIDATE_PATHS) {
+        const rawValue = getNestedValue(entry, path);
+        const numericValue = Number(rawValue);
+        if (Number.isFinite(numericValue) && numericValue > 0) {
+            return numericValue;
+        }
+    }
+    return null;
+}
+
+function pickQualifyingRecord(record) {
+    return record.q2 || record.q1 || null;
+}
+
+function buildScoringFields(record, existingByRider) {
+    const existing = existingByRider.get(record.riderId);
+    if (existing?.qualifying_scoring_source === 'admin_override') {
+        return {
+            qualifying_scoring_position: existing.qualifying_scoring_position,
+            qualifying_scoring_points: existing.qualifying_scoring_points,
+            qualifying_scoring_source: existing.qualifying_scoring_source
+        };
+    }
+
+    const qualifyingRecord = pickQualifyingRecord(record);
+    if (!qualifyingRecord) {
+        return {
+            qualifying_scoring_position: null,
+            qualifying_scoring_points: 0,
+            qualifying_scoring_source: null
+        };
+    }
+
+    const gridPosition = extractGridPosition(qualifyingRecord.raw);
+    const scoringPosition = Number.isFinite(gridPosition) ? gridPosition : qualifyingRecord.position;
+    const scoringSource = Number.isFinite(gridPosition) ? 'api_grid' : 'raw_qualifying';
+
+    return {
+        qualifying_scoring_position: scoringPosition,
+        qualifying_scoring_points: qPoints(scoringPosition),
+        qualifying_scoring_source: scoringSource
+    };
+}
+
 function mergeSessions(q1, q2, spr, rac) {
     const byRider = new Map();
 
@@ -104,8 +169,8 @@ function mergeSessions(q1, q2, spr, rac) {
                 };
 
                 const pos = Number(r.position);
-                if (kind === "q1") cur.q1 = { position: pos, points: qPoints(pos) };
-                if (kind === "q2") cur.q2 = { position: pos, points: qPoints(pos) };
+                if (kind === "q1") cur.q1 = { position: pos, points: qPoints(pos), raw: r };
+                if (kind === "q2") cur.q2 = { position: pos, points: qPoints(pos), raw: r };
                 if (kind === "spr") cur.spr = { position: pos, points: r.points };
                 if (kind === "rac") cur.rac = { position: pos, points: r.points };
 
@@ -131,18 +196,22 @@ function mergeSessions(q1, q2, spr, rac) {
     return merged;
 }
 
-function buildUpserts(merged, championshipId, calendarId, riderNumberToId) {
+function buildUpserts(merged, championshipId, calendarId, riderNumberToId, existingByRider) {
     const out = [];
     for (const r of merged) {
         const riderId = riderNumberToId.get(Number(r.riderNumber));
         if (!riderId) continue;
 
+        const qualifyingRecord = pickQualifyingRecord(r);
+        const scoringFields = buildScoringFields({ ...r, riderId }, existingByRider);
+
         out.push({
             championship_id: championshipId,
             calendar_id: calendarId,
             rider_id: riderId,
-            qualifying_position: (r.q1 && r.q1.position) || (r.q2 && r.q2.position) || null,
-            qualifying_points: (r.q1 && r.q1.points) || (r.q2 && r.q2.points) || null,
+            qualifying_position: qualifyingRecord?.position ?? null,
+            qualifying_points: qualifyingRecord?.points ?? null,
+            ...scoringFields,
             sprint_position: (r.spr && r.spr.position) || null,
             sprint_points: (r.spr && r.spr.points) || null,
             race_position: (r.rac && r.rac.position) || null,
@@ -229,7 +298,13 @@ async (req, res) => {
             if (r && r.rider_id && r.rider_id.number)
                 riderNumberToId.set(Number(r.rider_id.number), r.rider_id.id);
             });
-            const rows = buildUpserts(merged, championshipId, calendarId, riderNumberToId);
+            const { data: existingResults } = await db
+                .from("motogp_results")
+                .select("rider_id,qualifying_scoring_position,qualifying_scoring_points,qualifying_scoring_source")
+                .eq("championship_id", championshipId)
+                .eq("calendar_id", calendarId);
+            const existingByRider = new Map((existingResults || []).map((row) => [Number(row.rider_id), row]));
+            const rows = buildUpserts(merged, championshipId, calendarId, riderNumberToId, existingByRider);
 
             if (rows.length) {
                 const { error } = await db

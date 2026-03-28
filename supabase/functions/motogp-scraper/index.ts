@@ -36,6 +36,9 @@ interface PartialResult {
   calendar_id: number;
   qualifying_position?: number;
   qualifying_points?: number;
+  qualifying_scoring_position?: number;
+  qualifying_scoring_points?: number;
+  qualifying_scoring_source?: string;
   sprint_position?: number;
   sprint_points?: number;
   race_position?: number;
@@ -165,6 +168,16 @@ export default async function handler(req: Request): Promise<Response> {
     }
   });
 
+  const { data: existingResults } = await supabase
+    .from("motogp_results")
+    .select("rider_id,qualifying_scoring_position,qualifying_scoring_points,qualifying_scoring_source")
+    .eq("championship_id", championshipId)
+    .eq("calendar_id", calendarId);
+  const existingByRider = new Map<number, any>();
+  (existingResults ?? []).forEach((row) => {
+    existingByRider.set(Number(row.rider_id), row);
+  });
+
   // Connect once to Browserless and scrape all four pages concurrently
   const browser = await puppeteer.connect({ browserWSEndpoint: browserlessWs });
   const [q1Data, q2Data, sprData, racData] = await Promise.all([
@@ -196,7 +209,16 @@ export default async function handler(req: Request): Promise<Response> {
         championship_id: championshipId,
         calendar_id: calendarId,
         qualifying_position: row.position,
-        qualifying_points: getMotoGPPoints(row.position)
+        qualifying_points: getMotoGPPoints(row.position),
+        qualifying_scoring_position: existingByRider.get(riderId)?.qualifying_scoring_source === "admin_override"
+          ? existingByRider.get(riderId).qualifying_scoring_position
+          : row.position,
+        qualifying_scoring_points: existingByRider.get(riderId)?.qualifying_scoring_source === "admin_override"
+          ? existingByRider.get(riderId).qualifying_scoring_points
+          : getMotoGPPoints(row.position),
+        qualifying_scoring_source: existingByRider.get(riderId)?.qualifying_scoring_source === "admin_override"
+          ? "admin_override"
+          : "raw_qualifying"
       });
     }
     await logToSupabase(supabase, "info", `processed ${qualifyingData.length} qualifying rows`);

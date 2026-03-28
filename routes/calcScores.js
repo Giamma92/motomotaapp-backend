@@ -306,7 +306,7 @@ function calculateRaceScores({
             : null;
 
         const qualifyingScore = scoringContext.qualifyingSettled
-            ? Number(qualifyingResult?.qualifying_points || 0)
+            ? Number(qualifyingResult?.qualifying_scoring_points || qualifyingResult?.qualifying_points || 0)
             : 0;
         const raceScore = scoringContext.raceSettled
             ? Number(raceResult?.race_points || 0)
@@ -463,7 +463,11 @@ function logCalculationContext(championshipId, calendarId, datasets) {
     const riderSamples = (datasets.motogpResults || []).slice(0, 8).map(result => ({
         rider_id: result.rider_id,
         normalized_rider_id: normalizeEntityId(result.rider_id),
+        qualifying_position: result.qualifying_position,
         qualifying_points: result.qualifying_points,
+        qualifying_scoring_position: result.qualifying_scoring_position,
+        qualifying_scoring_points: result.qualifying_scoring_points,
+        qualifying_scoring_source: result.qualifying_scoring_source,
         sprint_points: result.sprint_points,
         race_points: result.race_points
     }));
@@ -533,7 +537,10 @@ function logUserCalculation({
                 ? {
                     rider_id: qualifyingResult.rider_id,
                     qualifying_position: qualifyingResult.qualifying_position,
-                    qualifying_points: qualifyingResult.qualifying_points
+                    qualifying_points: qualifyingResult.qualifying_points,
+                    qualifying_scoring_position: qualifyingResult.qualifying_scoring_position,
+                    qualifying_scoring_points: qualifyingResult.qualifying_scoring_points,
+                    qualifying_scoring_source: qualifyingResult.qualifying_scoring_source
                 }
                 : null,
             race: raceResult
@@ -899,6 +906,9 @@ async function loadMotoGPResults(championshipId, calendarId) {
                     calendar_id,
                     qualifying_position,
                     qualifying_points,
+                    qualifying_scoring_position,
+                    qualifying_scoring_points,
+                    qualifying_scoring_source,
                     sprint_position,
                     sprint_points,
                     race_position,

@@ -17,6 +17,22 @@ function getMotoGPPoints(pos: number): number {
   return table[pos] ?? 0;
 }
 
+const GRID_POSITION_CANDIDATE_PATHS = [
+  ["grid_position"],
+  ["grid"],
+  ["starting_grid_position"],
+  ["starting_position"],
+  ["start_position"],
+  ["gridPosition"],
+  ["startingGridPosition"],
+  ["startingPosition"],
+  ["startPosition"],
+  ["race", "grid_position"],
+  ["race", "gridPosition"],
+  ["race", "starting_position"],
+  ["race", "startingPosition"]
+];
+
 // Helper to log messages to function_logs
 async function logToSupabase(supabase: any, level: string, message: string) {
   await supabase.from("function_logs").insert({ level, message }).catch(() => {});
@@ -32,6 +48,21 @@ async function fetchWithTimeout(url: string, timeoutMs = 10000): Promise<Respons
   } finally {
     clearTimeout(timer);
   }
+}
+
+function getNestedValue(source: any, path: string[]): unknown {
+  return path.reduce((current, key) => (current == null ? undefined : current[key]), source);
+}
+
+function extractGridPosition(entry: any): number | null {
+  for (const path of GRID_POSITION_CANDIDATE_PATHS) {
+    const rawValue = getNestedValue(entry, path);
+    const numericValue = Number(rawValue);
+    if (Number.isFinite(numericValue) && numericValue > 0) {
+      return numericValue;
+    }
+  }
+  return null;
 }
 
 export default async function handler(req: Request): Promise<Response> {
@@ -148,6 +179,16 @@ export default async function handler(req: Request): Promise<Response> {
     if (r.rider_id?.number) riderMap.set(String(r.rider_id.number), r.rider_id.id);
   });
 
+  const { data: existingResults } = await supabase
+    .from("motogp_results")
+    .select("rider_id,qualifying_scoring_position,qualifying_scoring_points,qualifying_scoring_source")
+    .eq("championship_id", championshipId)
+    .eq("calendar_id", calendarId);
+  const existingByRider = new Map<number, any>();
+  (existingResults ?? []).forEach((row) => {
+    existingByRider.set(Number(row.rider_id), row);
+  });
+
   // 6. Build upsert records
   const upserts = [];
   for (let i = 0; i < classification.length; i++) {
@@ -172,6 +213,18 @@ export default async function handler(req: Request): Promise<Response> {
     if (sessionType === "Q1" || sessionType === "Q2") {
       record.qualifying_position = pos;
       record.qualifying_points = getMotoGPPoints(pos);
+      const existing = existingByRider.get(riderId);
+      if (existing?.qualifying_scoring_source === "admin_override") {
+        record.qualifying_scoring_position = existing.qualifying_scoring_position;
+        record.qualifying_scoring_points = existing.qualifying_scoring_points;
+        record.qualifying_scoring_source = existing.qualifying_scoring_source;
+      } else {
+        const gridPosition = extractGridPosition(entry);
+        const scoringPosition = Number.isFinite(gridPosition) ? Number(gridPosition) : pos;
+        record.qualifying_scoring_position = scoringPosition;
+        record.qualifying_scoring_points = getMotoGPPoints(scoringPosition);
+        record.qualifying_scoring_source = Number.isFinite(gridPosition) ? "api_grid" : "raw_qualifying";
+      }
     } else if (sessionType === "SPR") {
       record.sprint_position = pos;
       record.sprint_points = entry.points;

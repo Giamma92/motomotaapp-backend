@@ -147,14 +147,15 @@ function getChampionshipWindow(calendarRow, timeZone = DEFAULT_CHAMPIONSHIP_TIME
   const tz = normalizeTimeZone(timeZone);
   const raceDate = calendarRow.event_date;
   const dayBeforeRace = addDaysToYyyyMmDd(raceDate, -1);
+  const twoDaysBeforeRace = addDaysToYyyyMmDd(raceDate, -2);
   const threeDaysBeforeRace = addDaysToYyyyMmDd(raceDate, -3);
 
-  if (!dayBeforeRace || !threeDaysBeforeRace) {
+  if (!dayBeforeRace || !twoDaysBeforeRace || !threeDaysBeforeRace) {
     return null;
   }
 
   const lineupsStart = buildZonedDateTime(threeDaysBeforeRace, DEFAULT_TIME, tz);
-  const lineupsEnd = buildZonedDateTime(dayBeforeRace, calendarRow.qualifications_time || DEFAULT_TIME, tz);
+  const lineupsEnd = buildZonedDateTime(twoDaysBeforeRace, '23:59:59', tz);
   const sprintBetStart = buildZonedDateTime(dayBeforeRace, DEFAULT_TIME, tz);
   const sprintBetEndBase = buildZonedDateTime(dayBeforeRace, calendarRow.sprint_time || DEFAULT_TIME, tz);
   const raceBetStart = sprintBetEndBase ? new Date(sprintBetEndBase.getTime() + 30 * 60 * 1000) : null;
