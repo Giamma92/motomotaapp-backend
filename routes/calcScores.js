@@ -106,12 +106,14 @@ async function calculateAndPersistStandings(championshipId, calendarId, { force 
         };
     }
 
+    const effectiveScoringContext = enhanceScoringContextWithResults(scoringContext, motogpResults);
+
     const ensuredLineups = await ensureMissingLineupsForScoring(
         championshipId,
         calendarId,
         fantasyTeams,
         initialLineups,
-        scoringContext?.timeZone
+        effectiveScoringContext?.timeZone
     );
     if (!Array.isArray(ensuredLineups)) {
         return { ok: false, status: 500, error: 'Fail to prepare fallback lineups for scoring' };
@@ -123,7 +125,7 @@ async function calculateAndPersistStandings(championshipId, calendarId, { force 
         sprintBets,
         raceBets,
         motogpResults,
-        scoringContext
+        effectiveScoringContext
     );
     if (!outcomesSynced) {
         return { ok: false, status: 500, error: 'Fail to update bet outcomes' };
@@ -135,7 +137,7 @@ async function calculateAndPersistStandings(championshipId, calendarId, { force 
         raceBets,
         sprintBets,
         motogpResults,
-        scoringContext
+        scoringContext: effectiveScoringContext
     });
 
     const results = calculateRaceScores({
@@ -146,7 +148,7 @@ async function calculateAndPersistStandings(championshipId, calendarId, { force 
         raceBets,
         sprintBets,
         motogpResults,
-        scoringContext
+        scoringContext: effectiveScoringContext
     });
 
     const sourceHash = computeSourceHash({
@@ -157,12 +159,12 @@ async function calculateAndPersistStandings(championshipId, calendarId, { force 
         raceBets,
         sprintBets,
         motogpResults,
-        scoringContext
+        scoringContext: effectiveScoringContext
     });
 
     if (!force && existingRun?.status === 'completed' && existingRun.source_hash === sourceHash) {
         console.log(`Standings already up to date for championship ${championshipId}, calendar ${calendarId}`);
-        return { ok: true, results, scoringContext };
+        return { ok: true, results, scoringContext: effectiveScoringContext };
     }
 
     const entriesPayload = results.map(result => ({
@@ -231,7 +233,45 @@ async function calculateAndPersistStandings(championshipId, calendarId, { force 
         last_error: null
     });
 
-    return { ok: true, results, scoringContext };
+    return { ok: true, results, scoringContext: effectiveScoringContext };
+}
+
+function hasQualifyingResults(motogpResults) {
+    return (motogpResults || []).some(result =>
+        Number.isFinite(Number(result?.qualifying_scoring_position)) ||
+        Number.isFinite(Number(result?.qualifying_position)) ||
+        Number.isFinite(Number(result?.qualifying_scoring_points)) && Number(result?.qualifying_scoring_points) > 0 ||
+        Number.isFinite(Number(result?.qualifying_points)) && Number(result?.qualifying_points) > 0
+    );
+}
+
+function hasSprintResults(motogpResults) {
+    return (motogpResults || []).some(result =>
+        Number.isFinite(Number(result?.sprint_position)) ||
+        Number.isFinite(Number(result?.sprint_points)) && Number(result?.sprint_points) > 0
+    );
+}
+
+function hasRaceResults(motogpResults) {
+    return (motogpResults || []).some(result =>
+        Number.isFinite(Number(result?.race_position)) ||
+        Number.isFinite(Number(result?.race_points)) && Number(result?.race_points) > 0
+    );
+}
+
+function enhanceScoringContextWithResults(scoringContext, motogpResults) {
+    const resultDrivenFlags = {
+        qualifyingSettled: hasQualifyingResults(motogpResults),
+        sprintSettled: hasSprintResults(motogpResults),
+        raceSettled: hasRaceResults(motogpResults)
+    };
+
+    return {
+        ...scoringContext,
+        qualifyingSettled: Boolean(scoringContext?.qualifyingSettled || resultDrivenFlags.qualifyingSettled),
+        sprintSettled: Boolean(scoringContext?.sprintSettled || resultDrivenFlags.sprintSettled),
+        raceSettled: Boolean(scoringContext?.raceSettled || resultDrivenFlags.raceSettled)
+    };
 }
 
 async function invalidateRaceScores(championshipId, calendarId) {
