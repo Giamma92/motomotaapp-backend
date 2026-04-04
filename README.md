@@ -1,6 +1,18 @@
 # motomotaapp-backend
 MotoMota API Backend
 
+## Telegram notifications
+
+To enable Telegram notifications for saved lineups, configure these environment variables:
+
+```env
+TELEGRAM_NOTIFICATIONS_ENABLED=true
+TELEGRAM_BOT_TOKEN=your_bot_token
+TELEGRAM_CHAT_ID=your_group_chat_id
+```
+
+When enabled, the backend sends a Telegram group message after every successful `lineups` save.
+
 
 
 #Supabase

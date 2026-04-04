@@ -3,6 +3,7 @@ const express = require('express');
 const router = express.Router();
 const db = require('../models/db');
 const authMiddleware = require('../middleware/authMiddleware');
+const { notifyLineupPlaced } = require('../services/telegramNotifier');
 const {
   DEFAULT_CHAMPIONSHIP_TIMEZONE,
   canSubmitLineup,
@@ -199,6 +200,16 @@ router.put('/championship/:championship_id/lineups', authMiddleware, async (req,
       console.error("Error inserting lineup:", error);
       return res.status(500).json({ error: error.message });
     }
+
+    notifyLineupPlaced({
+      championshipId,
+      userId,
+      calendarId: calendar_id,
+      qualifyingRiderId: qualifying_rider_id,
+      raceRiderId: race_rider_id
+    }).catch(notificationError => {
+      console.error('Failed to send lineup Telegram notification:', notificationError);
+    });
     
     res.status(201).json(data[0]);
   } catch (err) {
