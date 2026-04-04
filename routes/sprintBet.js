@@ -85,11 +85,16 @@ router.put('/championship/:championship_id/sprint_bet', authMiddleware, async (r
       return res.status(500).json({ error: betsError.message });
     }
 
+    const bets = existingBets || [];
+    const currentBet = bets.find(
+      bet => Number(bet.calendar_id) === calendar_id && Number(bet.rider_id) === rider_id
+    );
+
     // Calculate total points already used in sprint bets
-    const totalPoints = existingBets.reduce(
+    const totalPoints = bets.reduce(
       (sum, bet) => (Number(bet.calendar_id) === calendar_id ? sum + Number(bet.points || 0) : sum),
       0
-    );
+    ) - Number(currentBet?.points || 0);
     if (config.bets_limit_sprint_points && totalPoints + points > config.bets_limit_sprint_points) {
       return res.status(400).json({
         error: `Insufficient remaining points. You have ${config.bets_limit_sprint_points - totalPoints} points left.`
@@ -97,7 +102,9 @@ router.put('/championship/:championship_id/sprint_bet', authMiddleware, async (r
     }
 
     // Check the number of sprint bets already placed on this race
-    const betsThisRace = existingBets.filter(bet => Number(bet.calendar_id) === calendar_id);
+    const betsThisRace = bets.filter(
+      bet => Number(bet.calendar_id) === calendar_id && Number(bet.rider_id) !== rider_id
+    );
     if (config.bets_limit_sprint_race && betsThisRace.length >= config.bets_limit_sprint_race) {
       return res.status(400).json({
         error: `Maximum number of sprint bets (${config.bets_limit_sprint_race}) reached for this race.`
@@ -105,7 +112,9 @@ router.put('/championship/:championship_id/sprint_bet', authMiddleware, async (r
     }
 
     // Check the number of bets the user has placed on this rider
-    const betsThisRider = existingBets.filter(bet => Number(bet.rider_id) === rider_id);
+    const betsThisRider = bets.filter(
+      bet => Number(bet.rider_id) === rider_id && Number(bet.calendar_id) !== calendar_id
+    );
     if (config.bets_limit_sprint_driver && betsThisRider.length >= config.bets_limit_sprint_driver) {
       return res.status(400).json({
         error: `Maximum number of sprint bets (${config.bets_limit_sprint_driver}) reached for this rider.`

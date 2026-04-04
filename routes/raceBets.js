@@ -92,24 +92,31 @@ router.put('/championship/:championship_id/race_bet', authMiddleware, async (req
     if (betsError) return res.status(500).json({ error: betsError.message });
 
     const bets = existingBets || [];
+    const currentBet = bets.find(
+      bet => Number(bet.calendar_id) === calendar_id && Number(bet.rider_id) === rider_id
+    );
 
     // Points cap
     const totalPoints = bets.reduce(
       (sum, bet) => (Number(bet.calendar_id) === calendar_id ? sum + Number(bet.points || 0) : sum),
       0
-    );
+    ) - Number(currentBet?.points || 0);
     if (config.bets_limit_points && totalPoints + points > config.bets_limit_points) {
       return res.status(400).json({ error: 'Insufficient remaining points.' });
     }
 
     // Max bets per race
-    const betsThisRace = bets.filter(bet => Number(bet.calendar_id) === calendar_id);
+    const betsThisRace = bets.filter(
+      bet => Number(bet.calendar_id) === calendar_id && Number(bet.rider_id) !== rider_id
+    );
     if (config.bets_limit_race && betsThisRace.length >= config.bets_limit_race) {
       return res.status(400).json({ error: 'Maximum bets reached for this race.' });
     }
 
     // Max bets per rider
-    const betsThisRider = bets.filter(bet => Number(bet.rider_id) === rider_id);
+    const betsThisRider = bets.filter(
+      bet => Number(bet.rider_id) === rider_id && Number(bet.calendar_id) !== calendar_id
+    );
     if (config.bets_limit_driver && betsThisRider.length >= config.bets_limit_driver) {
       return res.status(400).json({ error: 'Maximum bets reached for this rider.' });
     }
