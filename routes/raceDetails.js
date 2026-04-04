@@ -48,7 +48,7 @@ router.get('/championship/:championship_id/race-details/:calendar_id', authMiddl
         const { data: lineups, error: lineupsError } = await queryLineups.select(`
             id,
             championship_id,
-            calendar_id(race_id(name,location)),
+            calendar_id(id,event_date,race_order,race_id(name,location)),
             user_id(id,first_name,last_name),
             race_rider_id(id,first_name, last_name,number),
             qualifying_rider_id(id,first_name, last_name,number),
@@ -76,7 +76,7 @@ router.get('/championship/:championship_id/race-details/:calendar_id', authMiddl
 
         const { data: sprints, error: sprintsError } = await querySprintBets.select(`id,
                 championship_id,
-                calendar_id(race_id(name,location)),
+                calendar_id(id,event_date,race_order,race_id(name,location)),
             user_id(id,first_name,last_name),
                 rider_id(id,first_name, last_name,number),
                 position,
@@ -108,7 +108,7 @@ router.get('/championship/:championship_id/race-details/:calendar_id', authMiddl
         const { data: bets, error: betsError } = await queryRaceBets.select(`
                 id,
                 championship_id,
-                calendar_id(race_id(name,location)),
+                calendar_id(id,event_date,race_order,race_id(name,location)),
             user_id(id,first_name,last_name),
                 rider_id(id,first_name, last_name,number),
                 position,
