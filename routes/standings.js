@@ -76,6 +76,7 @@ router.get('/championship/:championship_id/standings-breakdown', authMiddleware,
                 id,
                 race_order,
                 event_date,
+                cancelled,
                 race_id(name,location)
               `)
               .in('id', calendarIds),
@@ -104,6 +105,7 @@ router.get('/championship/:championship_id/standings-breakdown', authMiddleware,
               id: Number(entry.calendar_id) || entry.calendar_id,
               race_order: null,
               event_date: null,
+              cancelled: false,
               race_id: { name: 'Gara', location: '' }
           },
           user_id: userMap.get(String(entry.user_id)) || {

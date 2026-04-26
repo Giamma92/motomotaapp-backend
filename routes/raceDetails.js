@@ -158,7 +158,7 @@ router.get('/championship/:championship_id/race-details/:calendar_id', authMiddl
 
 /**
  * GET /api/championship/:championship_id/races/:calendar_id/fill-missing-lineups
- * Copy previous race lineups for users missing a lineup in the current race.
+ * Copy each missing user's latest available lineup before the current race.
  */
 router.get('/championship/:championship_id/races/:calendar_id/fill-missing-lineups', authMiddleware, authorizeRoles('Admin'), async (req, res) => {
     try {
@@ -168,42 +168,59 @@ router.get('/championship/:championship_id/races/:calendar_id/fill-missing-lineu
         // 1) Current race date
         const { data: currRace, error: currErr } = await db
             .from('calendar')
-            .select('id,event_date')
+            .select('id,event_date,cancelled')
             .eq('id', calendarId)
             .single();
         if (currErr || !currRace) return res.status(404).json({ error: 'Current race not found' });
+        if (currRace.cancelled) return res.status(400).json({ error: 'Race has been cancelled.' });
     
-        // 2) Previous race in same championship
-        const { data: prevRace, error: prevErr } = await db
-            .from('calendar')
-            .select('id,event_date')
-            .eq('championship_id', championshipId)
-            .lt('event_date', currRace.event_date)
-            .order('event_date', { ascending: false })
-            .limit(1)
-            .maybeSingle();
-        if (prevErr) return res.status(500).json({ error: prevErr.message });
-        if (!prevRace) return res.status(200).json({ inserted: 0, message: 'No previous race found' });
-    
-        // 3) Previous race lineups
-        const { data: prevLineups, error: prevLineupsErr } = await db
-            .from('lineups')
-            .select('user_id,qualifying_rider_id,race_rider_id')
-            .eq('championship_id', championshipId)
-            .eq('calendar_id', prevRace.id);
-        if (prevLineupsErr) return res.status(500).json({ error: prevLineupsErr.message });
-    
-        if (!prevLineups?.length) return res.status(200).json({ inserted: 0, message: 'No previous lineups' });
-    
-        // 4) Existing current race lineups (to avoid duplicates)
+        // 2) Existing current race lineups (to avoid duplicates)
         const { data: currLineups, error: currLineupsErr } = await db
             .from('lineups')
             .select('user_id')
             .eq('championship_id', championshipId)
             .eq('calendar_id', calendarId);
         if (currLineupsErr) return res.status(500).json({ error: currLineupsErr.message });
-    
+
+        // 3) Only users participating in the championship need an automatic lineup.
+        const { data: fantasyTeams, error: fantasyTeamsErr } = await db
+            .from('fantasy_teams')
+            .select('user_id')
+            .eq('championship_id', championshipId);
+        if (fantasyTeamsErr) return res.status(500).json({ error: fantasyTeamsErr.message });
+
         const existing = new Set((currLineups ?? []).map(r => r.user_id));
+        const missingUserIds = (fantasyTeams ?? [])
+            .map(team => team.user_id)
+            .filter(userId => userId && !existing.has(userId));
+
+        if (!missingUserIds.length) {
+            return res.status(200).json({
+                inserted: 0,
+                missingUsers: 0,
+                withoutPreviousLineup: 0,
+                message: 'All users already have lineups'
+            });
+        }
+
+        // 4) Load all previous lineups for missing users and keep the latest per user.
+        const { data: previousLineups, error: previousLineupsErr } = await db
+            .from('lineups')
+            .select('user_id,qualifying_rider_id,race_rider_id,calendar_id(id,event_date)')
+            .eq('championship_id', championshipId)
+            .in('user_id', missingUserIds);
+        if (previousLineupsErr) return res.status(500).json({ error: previousLineupsErr.message });
+
+        const latestLineupByUser = new Map();
+        const orderedPreviousLineups = (previousLineups ?? [])
+            .filter(lineup => lineup.calendar_id?.event_date && lineup.calendar_id.event_date < currRace.event_date)
+            .sort((left, right) => right.calendar_id.event_date.localeCompare(left.calendar_id.event_date));
+
+        for (const lineup of orderedPreviousLineups) {
+            if (!lineup.calendar_id || latestLineupByUser.has(lineup.user_id)) continue;
+            latestLineupByUser.set(lineup.user_id, lineup);
+        }
+
         const { data: config } = await db
             .from('configuration')
             .select('timezone')
@@ -212,27 +229,40 @@ router.get('/championship/:championship_id/races/:calendar_id/fill-missing-lineu
         const championshipTimeZone = normalizeTimeZone(config?.timezone || DEFAULT_CHAMPIONSHIP_TIMEZONE);
         const modifiedAt = formatSqlTimestamp(new Date(), championshipTimeZone);
     
-        // 5) Prepare inserts
-        const rows = prevLineups
-            .filter(r => !existing.has(r.user_id))
-            .map(r => ({
+        // 5) Prepare inserts from each user's latest available lineup.
+        const rows = missingUserIds
+            .map(userId => latestLineupByUser.get(userId))
+            .filter(Boolean)
+            .map(lineup => ({
             championship_id: championshipId,
             calendar_id: calendarId,
-            user_id: r.user_id,
-            qualifying_rider_id: r.qualifying_rider_id,
-            race_rider_id: r.race_rider_id,
+            user_id: lineup.user_id,
+            qualifying_rider_id: lineup.qualifying_rider_id,
+            race_rider_id: lineup.race_rider_id,
             modified_at: modifiedAt,
             automatically_inserted: true
             }));
-    
-        if (!rows.length) return res.status(200).json({ inserted: 0, message: 'All users already have lineups' });
+
+        if (!rows.length) {
+            return res.status(200).json({
+                inserted: 0,
+                missingUsers: missingUserIds.length,
+                withoutPreviousLineup: missingUserIds.length,
+                message: 'No previous lineups found for missing users'
+            });
+        }
     
         const { error: insertErr, count } = await db
             .from('lineups')
-            .insert(rows, { count: 'exact' });
+            .upsert(rows, { onConflict: 'championship_id,user_id,calendar_id', count: 'exact' });
         if (insertErr) return res.status(500).json({ error: insertErr.message });
     
-        return res.status(200).json({ inserted: count ?? rows.length });
+        return res.status(200).json({
+            inserted: count ?? rows.length,
+            missingUsers: missingUserIds.length,
+            withoutPreviousLineup: missingUserIds.length - rows.length,
+            message: `Inserted ${count ?? rows.length} automatic lineups`
+        });
         
     } catch (e) {
         console.error(e);

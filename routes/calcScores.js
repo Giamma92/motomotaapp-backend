@@ -349,7 +349,7 @@ function calculateRaceScores({
             ? Number(qualifyingResult?.qualifying_scoring_points || qualifyingResult?.qualifying_points || 0)
             : 0;
         const raceScore = scoringContext.raceSettled
-            ? Number(raceResult?.race_points || 0)
+            ? getRacePoints(raceResult)
             : 0;
         const sprintBetScore = Number(sprintBet?.points || 0);
         const raceBetScore = Number(raceBet?.points || 0);
@@ -417,7 +417,8 @@ function calculateRaceScores({
         .filter(result => !result.uses_fallback_score)
         .map(result => Number(result.own_score || 0));
 
-    const fallbackScore = eligibleScores.length > 0 ? Math.min(...eligibleScores) : 0;
+    const fallbackScore = eligibleScores.length > 0 ? Math.min(Math.min(...eligibleScores), 0) : 0;
+    const noLineupBetScoreCap = eligibleScores.length > 0 ? Math.min(Math.min(...eligibleScores), 15) : 15;
 
     return rawResults.map(result => {
         if (!result.uses_fallback_score) {
@@ -427,17 +428,44 @@ function calculateRaceScores({
             };
         }
 
+        const noLineupBetScore = calculateNoLineupBetScore(result, noLineupBetScoreCap, fallbackScore);
+
         return {
             ...result,
             qualifying_score: 0,
             race_score: 0,
             sprint_bet_score: 0,
-            sprint_bet_delta: 0,
+            sprint_bet_delta: result.sprint_bet_delta,
             race_bet_score: 0,
-            race_bet_delta: 0,
-            score: fallbackScore
+            race_bet_delta: result.race_bet_delta,
+            score: noLineupBetScore
         };
     });
+}
+
+function calculateNoLineupBetScore(result, positiveCap, fallbackScore) {
+    const betDelta = Number(result.sprint_bet_delta || 0) + Number(result.race_bet_delta || 0);
+
+    if (betDelta > 0) {
+        return Math.min(betDelta, positiveCap);
+    }
+
+    if (betDelta < 0) {
+        return betDelta;
+    }
+
+    return fallbackScore;
+}
+
+function getRacePoints(result) {
+    if (!result) return 0;
+
+    const explicitPoints = Number(result.race_points);
+    if (Number.isFinite(explicitPoints)) {
+        return explicitPoints;
+    }
+
+    return getMotoGPPoints(result.race_position);
 }
 
 function calculateBetDelta(selectedPosition, actualPosition, betScore) {
@@ -733,7 +761,7 @@ async function loadScoringContext(championshipId, calendarId) {
                 .maybeSingle(),
             db
                 .from('calendar')
-                .select('id,event_date,qualifications_time,sprint_time,event_time')
+                .select('id,event_date,qualifications_time,sprint_time,event_time,cancelled')
                 .eq('championship_id', championshipId)
                 .eq('id', calendarId)
                 .maybeSingle()
@@ -749,6 +777,10 @@ async function loadScoringContext(championshipId, calendarId) {
         }
         if (!calendarRow) {
             console.error('Calendar row not found for calc scores', { championshipId, calendarId });
+            return null;
+        }
+        if (calendarRow.cancelled) {
+            console.error('Cannot calculate scores for cancelled race', { championshipId, calendarId });
             return null;
         }
 

@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const authMiddleware = require('../middleware/authMiddleware');
+const authorizeRoles = require('../middleware/authorizeRoles');
 const db = require('../models/db');
 const {
   DEFAULT_CHAMPIONSHIP_TIMEZONE,
@@ -35,6 +36,7 @@ router.get('/championship/:id/calendar', authMiddleware, async (req, res) => {
         qualifications_time,
         sprint_time,
         event_time,
+        cancelled,
         race_id(name,location)
       `)
       .eq('championship_id', championshipId)
@@ -66,6 +68,7 @@ router.get('/championship/:championship_id/calendar/:calendar_id', authMiddlewar
         qualifications_time,
         sprint_time,
         event_time,
+        cancelled,
         race_id(name,location,country)
       `)
       .eq('championship_id', championshipId)
@@ -105,8 +108,10 @@ router.get('/championship/:championship_id/next-race', authMiddleware, async (re
         qualifications_time,
         sprint_time,
         event_time,
+        cancelled,
         race_id(name,location,country)`)
       .eq('championship_id', championshipId)
+      .eq('cancelled', false)
       .gte('event_date', today)
       .order('event_date', { ascending: true })
       .limit(1);
@@ -121,6 +126,43 @@ router.get('/championship/:championship_id/next-race', authMiddleware, async (re
     res.json(data[0]);
   } catch (err) {
     console.error('Unexpected error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// PATCH cancellation status for a specific calendar race.
+router.patch('/championship/:championship_id/calendar/:calendar_id/cancelled', authMiddleware, authorizeRoles('Admin'), async (req, res) => {
+  const championshipId = req.params.championship_id;
+  const calendarId = req.params.calendar_id;
+  const cancelled = Boolean(req.body?.cancelled);
+
+  try {
+    const { data, error } = await db
+      .from('calendar')
+      .update({ cancelled })
+      .eq('championship_id', championshipId)
+      .eq('id', calendarId)
+      .select(`
+        id,
+        championship_id,
+        race_order,
+        event_date,
+        qualifications_time,
+        sprint_time,
+        event_time,
+        cancelled,
+        race_id(name,location,country)
+      `)
+      .single();
+
+    if (error) {
+      console.error('Error updating calendar cancellation status:', error);
+      return res.status(500).json({ error: error.message });
+    }
+
+    res.json(data);
+  } catch (err) {
+    console.error('Unexpected error updating calendar cancellation status:', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

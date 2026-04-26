@@ -60,7 +60,7 @@ router.put('/championship/:championship_id/race_bet', authMiddleware, async (req
     const modifiedAt = formatSqlTimestamp(new Date(), championshipTimeZone);
     const { data: calendarRow, error: calendarError } = await db
       .from('calendar')
-      .select('event_date, qualifications_time, sprint_time, event_time')
+      .select('event_date, qualifications_time, sprint_time, event_time, cancelled')
       .eq('championship_id', championship_id)
       .eq('id', calendar_id)
       .maybeSingle();
@@ -72,6 +72,10 @@ router.put('/championship/:championship_id/race_bet', authMiddleware, async (req
 
     if (!calendarRow) {
       return res.status(404).json({ error: 'Race calendar not found' });
+    }
+
+    if (calendarRow.cancelled) {
+      return res.status(400).json({ error: 'Race has been cancelled.' });
     }
 
     if (!canSubmitRaceBet(calendarRow, championshipTimeZone)) {
@@ -199,7 +203,7 @@ router.delete('/championship/:championship_id/race_bet/:calendar_id/:rider_id',
       const championshipTimeZone = normalizeTimeZone(config.timezone || DEFAULT_CHAMPIONSHIP_TIMEZONE);
       const { data: calendarRow, error: calendarError } = await db
         .from('calendar')
-        .select('event_date, qualifications_time, sprint_time, event_time')
+        .select('event_date, qualifications_time, sprint_time, event_time, cancelled')
         .eq('championship_id', championship_id)
         .eq('id', calendar_id)
         .maybeSingle();
@@ -211,6 +215,10 @@ router.delete('/championship/:championship_id/race_bet/:calendar_id/:rider_id',
 
       if (!calendarRow) {
         return res.status(404).json({ error: 'Race calendar not found' });
+      }
+
+      if (calendarRow.cancelled) {
+        return res.status(400).json({ error: 'Race has been cancelled.' });
       }
 
       if (!canSubmitRaceBet(calendarRow, championshipTimeZone)) {
