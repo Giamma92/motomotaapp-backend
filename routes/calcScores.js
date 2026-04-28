@@ -353,6 +353,7 @@ function calculateRaceScores({
             : 0;
         const sprintBetScore = Number(sprintBet?.points || 0);
         const raceBetScore = Number(raceBet?.points || 0);
+        const effectiveRaceBetScore = hasManualLineup ? raceBetScore : Math.min(raceBetScore, 15);
 
         const sprintBetDelta = scoringContext.sprintSettled
             ? calculateBetDelta(
@@ -365,7 +366,7 @@ function calculateRaceScores({
             ? calculateBetDelta(
                 raceBet?.position,
                 raceBetResult?.race_position,
-                raceBetScore
+                effectiveRaceBetScore
             )
             : 0;
 
@@ -408,17 +409,16 @@ function calculateRaceScores({
             sprint_bet_delta: sprintBetDelta,
             race_bet_score: raceBetScore,
             race_bet_delta: raceBetDelta,
+            has_race_bet: Boolean(raceBet),
             own_score: ownScore,
             score: ownScore
         };
     });
 
-    const eligibleScores = rawResults
-        .filter(result => !result.uses_fallback_score)
-        .map(result => Number(result.own_score || 0));
-
-    const fallbackScore = eligibleScores.length > 0 ? Math.min(Math.min(...eligibleScores), 0) : 0;
-    const noLineupBetScoreCap = eligibleScores.length > 0 ? Math.min(Math.min(...eligibleScores), 15) : 15;
+    const raceBetDeltas = rawResults
+        .filter(result => result.uses_fallback_score && result.has_race_bet)
+        .map(result => Number(result.race_bet_delta || 0));
+    const fallbackScore = raceBetDeltas.length > 0 ? Math.min(Math.min(...raceBetDeltas), 0) : 0;
 
     return rawResults.map(result => {
         if (!result.uses_fallback_score) {
@@ -428,7 +428,7 @@ function calculateRaceScores({
             };
         }
 
-        const noLineupBetScore = calculateNoLineupBetScore(result, noLineupBetScoreCap, fallbackScore);
+        const noLineupBetScore = calculateNoLineupBetScore(result, fallbackScore);
 
         return {
             ...result,
@@ -443,15 +443,9 @@ function calculateRaceScores({
     });
 }
 
-function calculateNoLineupBetScore(result, positiveCap, fallbackScore) {
-    const betDelta = Number(result.sprint_bet_delta || 0) + Number(result.race_bet_delta || 0);
-
-    if (betDelta > 0) {
-        return Math.min(betDelta, positiveCap);
-    }
-
-    if (betDelta < 0) {
-        return betDelta;
+function calculateNoLineupBetScore(result, fallbackScore) {
+    if (result.has_race_bet) {
+        return Number(result.race_bet_delta || 0);
     }
 
     return fallbackScore;
