@@ -66,15 +66,19 @@ async function getSeasonUuidByYear(year) {
 }
 
 async function getEventByCode(seasonUuid, code) {
-    const events = await fetchJSON(
-        `${PULSELIVE_BASE}/v1/results/events?seasonUuid=${seasonUuid}&isFinished=true`
-    );
     const target = String(code).toUpperCase();
-    const event = events.find(
-        (e) => (e.short_name || (e.country && e.country.iso) || "").toUpperCase() === target
-    );
-    if (!event) throw new Error(`Pulselive: event with code ${target} not found`);
-    return event;
+
+    // Try finished events first; if not found, retry without the isFinished filter
+    // (needed for multi-race weekends like RAC2 that may not yet be marked finished)
+    for (const filter of ['?seasonUuid=' + seasonUuid + '&isFinished=true', '?seasonUuid=' + seasonUuid]) {
+        const events = await fetchJSON(`${PULSELIVE_BASE}/v1/results/events${filter}`);
+        const event = events.find(
+            (e) => (e.short_name || (e.country && e.country.iso) || "").toUpperCase() === target
+        );
+        if (event) return event;
+    }
+
+    throw new Error(`Pulselive: event with code ${target} not found`);
 }
 
 async function getSessions(eventUuid, categoryUuid) {
