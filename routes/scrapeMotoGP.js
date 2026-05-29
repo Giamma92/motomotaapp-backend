@@ -172,9 +172,9 @@ function mergeSessions(q1, q2, spr, rac) {
                     teamName: r.team_name,
                 };
 
-                const pos = Number(r.position);
-                if (kind === "q1") cur.q1 = { position: pos, points: qPoints(pos), raw: r };
-                if (kind === "q2") cur.q2 = { position: pos, points: qPoints(pos), raw: r };
+                const pos = r.position != null ? Number(r.position) : null;
+                if (kind === "q1") cur.q1 = { position: pos, points: pos != null ? qPoints(pos) : 0, raw: r };
+                if (kind === "q2") cur.q2 = { position: pos, points: pos != null ? qPoints(pos) : 0, raw: r };
                 if (kind === "spr") cur.spr = { position: pos, points: r.points };
                 if (kind === "rac") cur.rac = { position: pos, points: r.points };
 
@@ -216,10 +216,10 @@ function buildUpserts(merged, championshipId, calendarId, riderNumberToId, exist
             qualifying_position: qualifyingRecord?.position ?? null,
             qualifying_points: qualifyingRecord?.points ?? null,
             ...scoringFields,
-            sprint_position: (r.spr && r.spr.position) || null,
-            sprint_points: (r.spr && r.spr.points) || null,
-            race_position: (r.rac && r.rac.position) || null,
-            race_points: (r.rac && r.rac.points) || null,
+            sprint_position: r.spr?.position ?? null,
+            sprint_points: r.spr?.points ?? null,
+            race_position: r.rac?.position ?? null,
+            race_points: r.rac?.points ?? null,
             last_modification_at: new Date().toISOString()
         });
     }
@@ -271,15 +271,12 @@ async (req, res) => {
                 const n = (t === "Q1") ? 1 : (t === "Q2") ? 2 : null;
                 s = sessions.find((x) => String(x.type || "").toUpperCase() === String(t).substring(0,1) && x.number === n);
             } else if (t === 'RAC') {
-                // Pick the highest-numbered race session (RAC, RAC2, RAC3, …)
+                // Pulselive uses type="RAC" + number field (1, 2, 3…) for multi-race weekends.
+                // Pick the session with the highest number among all type=RAC sessions.
                 const racSessions = sessions.filter((x) =>
-                    /^RAC\d*$/.test(String(x.type || "").toUpperCase())
+                    String(x.type || "").toUpperCase() === "RAC"
                 );
-                s = racSessions.sort((a, b) => {
-                    const numA = Number(String(a.type).replace(/^RAC/i, "") || "0");
-                    const numB = Number(String(b.type).replace(/^RAC/i, "") || "0");
-                    return numB - numA; // descending: RAC3 > RAC2 > RAC
-                })[0];
+                s = racSessions.sort((a, b) => (Number(b.number) || 0) - (Number(a.number) || 0))[0];
             } else {
                 s = sessions.find((x) => String(x.type || "").toUpperCase() === String(t));
             }
