@@ -266,8 +266,19 @@ async (req, res) => {
             if (t === 'Q1' || t === 'Q2') {
                 const n = (t === "Q1") ? 1 : (t === "Q2") ? 2 : null;
                 s = sessions.find((x) => String(x.type || "").toUpperCase() === String(t).substring(0,1) && x.number === n);
-            } else 
+            } else if (t === 'RAC') {
+                // Pick the highest-numbered race session (RAC, RAC2, RAC3, …)
+                const racSessions = sessions.filter((x) =>
+                    /^RAC\d*$/.test(String(x.type || "").toUpperCase())
+                );
+                s = racSessions.sort((a, b) => {
+                    const numA = Number(String(a.type).replace(/^RAC/i, "") || "0");
+                    const numB = Number(String(b.type).replace(/^RAC/i, "") || "0");
+                    return numB - numA; // descending: RAC3 > RAC2 > RAC
+                })[0];
+            } else {
                 s = sessions.find((x) => String(x.type || "").toUpperCase() === String(t));
+            }
             return s && s.id;
         };
         const [q1Id, q2Id, sprId, racId] = ["Q1", "Q2", "SPR", "RAC"].map(find);
