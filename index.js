@@ -26,6 +26,9 @@ const config = require('./routes/config');
 const scrapeMotoGp = require('./routes/scrapeMotoGP');
 const calcScores = require('./routes/calcScores');
 const i18nRoutes = require('./routes/i18n');
+const notificationsRoutes = require('./routes/notifications');
+const notificationSettingsRoutes = require('./routes/notificationSettings');
+const pushSubscriptionsRoutes = require('./routes/pushSubscriptions');
 
 
 // Define routes
@@ -48,6 +51,9 @@ app.use('/api', config);
 app.use('/api', scrapeMotoGp);
 app.use('/api', calcScores);
 app.use('/api', i18nRoutes);
+app.use('/api', notificationsRoutes);
+app.use('/api', notificationSettingsRoutes);
+app.use('/api', pushSubscriptionsRoutes);
 
 // Health-check route
 app.get('/', (req, res) => {

@@ -143,6 +143,7 @@ router.put('/championship/:championship_id/sprint_bet', authMiddleware, async (r
       console.error('Error upserting sprint bet:', error);
       return res.status(500).json({ error: error.message });
     }
+
     res.status(201).json(data[0]);
   } catch (err) {
     console.error('Unexpected error in sprint bet endpoint:', err);

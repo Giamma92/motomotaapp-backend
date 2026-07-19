@@ -4,6 +4,7 @@ const router = express.Router();
 const db = require('../models/db');
 const authMiddleware = require('../middleware/authMiddleware');
 const { notifyLineupPlaced } = require('../services/telegramNotifier');
+const { notifyChampionshipUsers } = require('../services/notificationService');
 const {
   DEFAULT_CHAMPIONSHIP_TIMEZONE,
   canSubmitLineup,
@@ -214,6 +215,16 @@ router.put('/championship/:championship_id/lineups', authMiddleware, async (req,
     }).catch(notificationError => {
       console.error('Failed to send lineup Telegram notification:', notificationError);
     });
+
+    notifyChampionshipUsers({
+      championshipId,
+      excludeUserId: userId,
+      category: 'lineup',
+      title: 'Nuovo schieramento salvato',
+      body: `Un utente ha salvato un nuovo schieramento per la gara.`,
+      type: 'info',
+      link: `/lineups/${championshipId}`
+    }).catch(err => console.error('Failed to send lineup in-app notification:', err));
     
     res.status(201).json(data[0]);
   } catch (err) {
