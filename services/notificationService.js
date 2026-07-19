@@ -15,7 +15,23 @@ async function createNotification({ userId, championshipId, category, title, bod
   return data;
 }
 
+async function deleteOldNotifications(hoursOld = 24) {
+  const cutoff = new Date(Date.now() - hoursOld * 60 * 60 * 1000).toISOString();
+  const { error } = await db
+    .from('notifications')
+    .delete()
+    .eq('is_read', true)
+    .lt('read_at', cutoff);
+
+  if (error) {
+    console.error('Failed to clean old notifications:', error);
+  }
+  return true;
+}
+
 async function getNotifications(userId, { unreadOnly = false, limit = 50, offset = 0 } = {}) {
+  deleteOldNotifications(24).catch(() => {});
+
   let query = db
     .from('notifications')
     .select('*')
@@ -162,8 +178,6 @@ async function upsertNotificationSettings(userId, championshipId, settings) {
     user_id: userId,
     championship_id: championshipId,
     lineup: settings.lineup ?? true,
-    race_bet: settings.race_bet ?? true,
-    sprint_bet: settings.sprint_bet ?? true,
     score_update: settings.score_update ?? true,
     standing_change: settings.standing_change ?? true,
     race_cancelled: settings.race_cancelled ?? true,

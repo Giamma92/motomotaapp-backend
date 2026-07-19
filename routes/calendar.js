@@ -163,7 +163,7 @@ router.patch('/championship/:championship_id/calendar/:calendar_id/cancelled', a
 
     if (cancelled) {
       const raceName = data?.race_id?.name || `Gara ${calendarId}`;
-      notifyChampionshipUsers({
+      await notifyChampionshipUsers({
         championshipId: Number(championshipId),
         excludeUserId: null,
         category: 'race_cancelled',

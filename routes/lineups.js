@@ -4,7 +4,6 @@ const router = express.Router();
 const db = require('../models/db');
 const authMiddleware = require('../middleware/authMiddleware');
 const { notifyLineupPlaced } = require('../services/telegramNotifier');
-const { notifyChampionshipUsers } = require('../services/notificationService');
 const {
   DEFAULT_CHAMPIONSHIP_TIMEZONE,
   canSubmitLineup,
@@ -216,15 +215,30 @@ router.put('/championship/:championship_id/lineups', authMiddleware, async (req,
       console.error('Failed to send lineup Telegram notification:', notificationError);
     });
 
-    notifyChampionshipUsers({
-      championshipId,
-      excludeUserId: userId,
-      category: 'lineup',
-      title: 'Nuovo schieramento salvato',
-      body: `Un utente ha salvato un nuovo schieramento per la gara.`,
-      type: 'info',
-      link: `/lineups/${championshipId}`
-    }).catch(err => console.error('Failed to send lineup in-app notification:', err));
+    try {
+      const { data: teams } = await db
+        .from('fantasy_teams')
+        .select('user_id')
+        .eq('championship_id', championshipId);
+
+      const notifs = (teams || [])
+        .filter(t => t.user_id !== userId)
+        .map(t => ({
+          user_id: t.user_id,
+          championship_id: championshipId,
+          category: 'lineup',
+          title: 'Nuovo schieramento salvato',
+          body: `Un utente ha salvato un nuovo schieramento per la gara.`,
+          type: 'info',
+          link: `/lineups/${championshipId}`
+        }));
+
+      if (notifs.length > 0) {
+        await db.from('notifications').insert(notifs);
+      }
+    } catch (err) {
+      console.error('Failed to create lineup notifications:', err);
+    }
     
     res.status(201).json(data[0]);
   } catch (err) {

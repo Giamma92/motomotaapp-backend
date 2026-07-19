@@ -264,25 +264,27 @@ async function calculateAndPersistStandings(championshipId, calendarId, { force 
         last_error: null
     });
 
-    db
-      .from('calendar')
-      .select('race_id(name)')
-      .eq('championship_id', championshipId)
-      .eq('id', calendarId)
-      .maybeSingle()
-      .then(({ data: cal }) => {
-        const raceName = cal?.race_id?.name || 'Gara';
-        return notifyChampionshipUsers({
-          championshipId,
-          excludeUserId: null,
-          category: 'score_update',
-          title: 'Punteggi aggiornati',
-          body: `I punteggi per ${raceName} sono stati calcolati.`,
-          type: 'info',
-          link: `/standings-breakdown`
-        });
-      })
-      .catch(err => console.error('Failed to send score update notification:', err));
+    try {
+      const { data: cal } = await db
+        .from('calendar')
+        .select('race_id(name)')
+        .eq('championship_id', championshipId)
+        .eq('id', calendarId)
+        .maybeSingle();
+
+      const raceName = cal?.race_id?.name || 'Gara';
+      await notifyChampionshipUsers({
+        championshipId,
+        excludeUserId: null,
+        category: 'score_update',
+        title: 'Punteggi aggiornati',
+        body: `I punteggi per ${raceName} sono stati calcolati.`,
+        type: 'info',
+        link: `/standings-breakdown`
+      });
+    } catch (err) {
+      console.error('Failed to send score update notification:', err);
+    }
 
     return { ok: true, results, scoringContext: effectiveScoringContext };
 }
