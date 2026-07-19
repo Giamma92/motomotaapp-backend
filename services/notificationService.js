@@ -84,22 +84,21 @@ async function notifyChampionshipUsers({ championshipId, excludeUserId, category
 
   if (userIds.length === 0) return false;
 
-  const { data: settings, error: settingsError } = await db
+  const { data: allSettings, error: settingsError } = await db
     .from('user_notification_settings')
-    .select('user_id')
+    .select(`user_id, ${category}`)
     .eq('championship_id', championshipId)
-    .in('user_id', userIds)
-    .eq(category, true);
+    .in('user_id', userIds);
 
   if (settingsError) {
     console.error('Failed to fetch notification settings:', settingsError);
     return false;
   }
 
-  const enabledUserIds = new Set((settings || []).map(s => s.user_id));
+  const settingsMap = new Map((allSettings || []).map(s => [s.user_id, s[category]]));
 
   const notifications = userIds
-    .filter(id => enabledUserIds.has(id))
+    .filter(id => settingsMap.get(id) !== false)
     .map(userId => ({
       user_id: userId,
       championship_id: championshipId,
@@ -132,6 +131,17 @@ async function notifyChampionshipUsers({ championshipId, excludeUserId, category
     }
   }).catch(err => console.error('Failed to send push notifications:', err));
 
+  return true;
+}
+
+async function deleteReadNotifications(userId) {
+  const { error } = await db
+    .from('notifications')
+    .delete()
+    .eq('user_id', userId)
+    .eq('is_read', true);
+
+  if (error) throw error;
   return true;
 }
 
@@ -178,5 +188,6 @@ module.exports = {
   markAllAsRead,
   notifyChampionshipUsers,
   getNotificationSettings,
-  upsertNotificationSettings
+  upsertNotificationSettings,
+  deleteReadNotifications
 };

@@ -3,6 +3,7 @@ const router = express.Router();
 const authMiddleware = require('../middleware/authMiddleware');
 const authorizeRoles = require('../middleware/authorizeRoles');
 const db = require('../models/db');
+const { notifyChampionshipUsers } = require('../services/notificationService');
 const {
   DEFAULT_CHAMPIONSHIP_TIMEZONE,
   formatYyyyMmDd,
@@ -158,6 +159,19 @@ router.patch('/championship/:championship_id/calendar/:calendar_id/cancelled', a
     if (error) {
       console.error('Error updating calendar cancellation status:', error);
       return res.status(500).json({ error: error.message });
+    }
+
+    if (cancelled) {
+      const raceName = data?.race_id?.name || `Gara ${calendarId}`;
+      notifyChampionshipUsers({
+        championshipId: Number(championshipId),
+        excludeUserId: null,
+        category: 'race_cancelled',
+        title: `Gara cancellata: ${raceName}`,
+        body: `La gara ${raceName} è stata cancellata. Schieramenti e scommesse non saranno considerati.`,
+        type: 'warning',
+        link: `/race-detail/${calendarId}`
+      }).catch(err => console.error('Failed to send race cancelled notification:', err));
     }
 
     res.json(data);

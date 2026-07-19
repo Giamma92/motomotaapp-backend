@@ -4,6 +4,7 @@ const router = express.Router();
 const db = require('../models/db');
 const authMiddleware = require('../middleware/authMiddleware');
 const authorizeRoles = require('../middleware/authorizeRoles');
+const { notifyChampionshipUsers } = require('../services/notificationService');
 const {
     DEFAULT_CHAMPIONSHIP_TIMEZONE,
     formatSqlTimestamp,
@@ -227,11 +228,61 @@ async function calculateAndPersistStandings(championshipId, calendarId, { force 
         return { ok: false, status: 500, error: 'Fail to update standings snapshot' };
     }
 
+    db
+      .from('standings')
+      .select('user_id, position')
+      .eq('championship_id', championshipId)
+      .then(({ data: oldStandings }) => {
+        const oldPos = new Map((oldStandings || []).map(s => [s.user_id, s.position]));
+        const notifs = aggregatedStandings
+          .filter(a => {
+            const prev = oldPos.get(a.user_id);
+            return prev && prev !== a.position;
+          })
+          .map(a => ({
+            user_id: a.user_id,
+            championship_id: championshipId,
+            category: 'standing_change',
+            title: a.position < oldPos.get(a.user_id)
+              ? `Sei salito al #${a.position} in classifica!`
+              : `Sei sceso al #${a.position} in classifica`,
+            body: null,
+            type: 'info',
+            link: '/standings-breakdown'
+          }));
+        if (notifs.length > 0) {
+          db.from('notifications').insert(notifs).catch(err =>
+            console.error('Failed to send standing change notifications:', err)
+          );
+        }
+      })
+      .catch(err => console.error('Failed to query old standings:', err));
+
     await upsertStandingsRun({
         ...runPayload,
         status: 'completed',
         last_error: null
     });
+
+    db
+      .from('calendar')
+      .select('race_id(name)')
+      .eq('championship_id', championshipId)
+      .eq('id', calendarId)
+      .maybeSingle()
+      .then(({ data: cal }) => {
+        const raceName = cal?.race_id?.name || 'Gara';
+        return notifyChampionshipUsers({
+          championshipId,
+          excludeUserId: null,
+          category: 'score_update',
+          title: 'Punteggi aggiornati',
+          body: `I punteggi per ${raceName} sono stati calcolati.`,
+          type: 'info',
+          link: `/standings-breakdown`
+        });
+      })
+      .catch(err => console.error('Failed to send score update notification:', err));
 
     return { ok: true, results, scoringContext: effectiveScoringContext };
 }

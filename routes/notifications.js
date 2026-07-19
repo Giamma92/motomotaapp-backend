@@ -5,7 +5,8 @@ const {
   getNotifications,
   getUnreadCount,
   markAsRead,
-  markAllAsRead
+  markAllAsRead,
+  deleteReadNotifications
 } = require('../services/notificationService');
 
 router.get('/notifications', authMiddleware, async (req, res) => {
@@ -47,6 +48,16 @@ router.put('/notifications/read-all', authMiddleware, async (req, res) => {
     res.json({ success: true });
   } catch (err) {
     console.error('Error marking all notifications as read:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+router.delete('/notifications/read', authMiddleware, async (req, res) => {
+  try {
+    await deleteReadNotifications(req.username);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Error deleting read notifications:', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
