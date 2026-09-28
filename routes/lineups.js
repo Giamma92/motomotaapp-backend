@@ -4,6 +4,7 @@ const router = express.Router();
 const db = require('../models/db');
 const authMiddleware = require('../middleware/authMiddleware');
 const { notifyLineupPlaced } = require('../services/telegramNotifier');
+const { notifyChampionshipUsers } = require('../services/notificationService');
 const {
   DEFAULT_CHAMPIONSHIP_TIMEZONE,
   canSubmitLineup,
@@ -186,6 +187,16 @@ router.put('/championship/:championship_id/lineups', authMiddleware, async (req,
       });
     }
 
+    // Detect if this is a brand-new lineup (notifications only on first save,
+    // so edits don't re-notify every participant over and over).
+    const { data: existingLineup } = await db
+      .from('lineups')
+      .select('id')
+      .eq('championship_id', championshipId)
+      .eq('user_id', userId)
+      .eq('calendar_id', calendar_id)
+      .maybeSingle();
+
     // Proceed with the upsert if validation passes
     const { data, error } = await db
       .from('lineups')
@@ -215,29 +226,33 @@ router.put('/championship/:championship_id/lineups', authMiddleware, async (req,
       console.error('Failed to send lineup Telegram notification:', notificationError);
     });
 
-    try {
-      const { data: teams } = await db
-        .from('fantasy_teams')
-        .select('user_id')
-        .eq('championship_id', championshipId);
+    // Notify the other participants (in-app bell + push), respecting their
+    // notification settings. Only on first save, so edits don't spam everyone.
+    // The link must use the calendar (race) id: /lineups/:id is guarded by
+    // RaceAccessGuard which resolves that param as a calendar race.
+    if (!existingLineup) {
+      try {
+        const { data: raceInfo } = await db
+          .from('calendar')
+          .select('race_id(name)')
+          .eq('championship_id', championshipId)
+          .eq('id', calendar_id)
+          .maybeSingle();
 
-      const notifs = (teams || [])
-        .filter(t => t.user_id !== userId)
-        .map(t => ({
-          user_id: t.user_id,
-          championship_id: championshipId,
+        const raceName = (raceInfo?.race_id?.name || '').trim() || 'la prossima gara';
+
+        await notifyChampionshipUsers({
+          championshipId: Number(championshipId),
+          excludeUserId: userId,
           category: 'lineup',
           title: 'Nuovo schieramento salvato',
-          body: `Un utente ha salvato un nuovo schieramento per la gara.`,
+          body: `Un utente ha salvato il proprio schieramento per ${raceName}.`,
           type: 'info',
-          link: `/lineups/${championshipId}`
-        }));
-
-      if (notifs.length > 0) {
-        await db.from('notifications').insert(notifs);
+          link: `/lineups/${calendar_id}`
+        });
+      } catch (err) {
+        console.error('Failed to create lineup notifications:', err);
       }
-    } catch (err) {
-      console.error('Failed to create lineup notifications:', err);
     }
     
     res.status(201).json(data[0]);

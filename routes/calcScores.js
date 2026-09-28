@@ -4,7 +4,11 @@ const router = express.Router();
 const db = require('../models/db');
 const authMiddleware = require('../middleware/authMiddleware');
 const authorizeRoles = require('../middleware/authorizeRoles');
-const { notifyChampionshipUsers } = require('../services/notificationService');
+const {
+    notifyChampionshipUsers,
+    filterByNotificationSettings
+} = require('../services/notificationService');
+const { sendPushToUser } = require('../services/pushNotificationService');
 const {
     DEFAULT_CHAMPIONSHIP_TIMEZONE,
     formatSqlTimestamp,
@@ -228,17 +232,32 @@ async function calculateAndPersistStandings(championshipId, calendarId, { force 
         return { ok: false, status: 500, error: 'Fail to update standings snapshot' };
     }
 
-    db
-      .from('standings')
-      .select('user_id, position')
-      .eq('championship_id', championshipId)
-      .then(({ data: oldStandings }) => {
+    // Standing change notifications: build per-user messages, respect the
+    // per-user settings, verify the insert result (supabase never throws) and
+    // push to the affected devices.
+    (async () => {
+      try {
+        const { data: oldStandings, error: standingsError } = await db
+          .from('standings')
+          .select('user_id, position')
+          .eq('championship_id', championshipId);
+
+        if (standingsError) throw standingsError;
+
         const oldPos = new Map((oldStandings || []).map(s => [s.user_id, s.position]));
-        const notifs = aggregatedStandings
-          .filter(a => {
-            const prev = oldPos.get(a.user_id);
-            return prev && prev !== a.position;
-          })
+        const changed = aggregatedStandings.filter(a => {
+          const prev = oldPos.get(a.user_id);
+          return prev && prev !== a.position;
+        });
+
+        if (changed.length === 0) return;
+
+        const allowedIds = new Set(
+          await filterByNotificationSettings(changed.map(a => a.user_id), championshipId, 'standing_change')
+        );
+
+        const notifs = changed
+          .filter(a => allowedIds.has(a.user_id))
           .map(a => ({
             user_id: a.user_id,
             championship_id: championshipId,
@@ -250,13 +269,28 @@ async function calculateAndPersistStandings(championshipId, calendarId, { force 
             type: 'info',
             link: '/standings-breakdown'
           }));
-        if (notifs.length > 0) {
-          db.from('notifications').insert(notifs).catch(err =>
-            console.error('Failed to send standing change notifications:', err)
-          );
-        }
-      })
-      .catch(err => console.error('Failed to query old standings:', err));
+
+        if (notifs.length === 0) return;
+
+        const { error: insertError } = await db.from('notifications').insert(notifs);
+        if (insertError) throw insertError;
+
+        notifs.forEach(n => {
+          sendPushToUser(n.user_id, {
+            notification: {
+              title: n.title,
+              body: n.title,
+              data: { link: n.link, category: 'standing_change', championshipId },
+              icon: '/favicon.ico',
+              badge: '/favicon.ico',
+              vibrate: [200, 100, 200]
+            }
+          }).catch(err => console.error('Failed to send standing change push:', err));
+        });
+      } catch (err) {
+        console.error('Failed to send standing change notifications:', err);
+      }
+    })();
 
     await upsertStandingsRun({
         ...runPayload,

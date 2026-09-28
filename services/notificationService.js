@@ -83,6 +83,29 @@ async function markAllAsRead(userId) {
   return true;
 }
 
+/**
+ * Filters the given user ids keeping only those that have not opted out of
+ * the given notification category. Fail-open: if the settings query fails we
+ * prefer sending an extra notification over silently dropping the whole batch.
+ */
+async function filterByNotificationSettings(userIds, championshipId, category) {
+  if (!userIds || userIds.length === 0) return [];
+
+  const { data, error } = await db
+    .from('user_notification_settings')
+    .select(`user_id, ${category}`)
+    .eq('championship_id', championshipId)
+    .in('user_id', userIds);
+
+  if (error) {
+    console.error('Failed to fetch notification settings (sending anyway):', error);
+    return userIds;
+  }
+
+  const settingsMap = new Map((data || []).map(s => [s.user_id, s[category]]));
+  return userIds.filter(id => settingsMap.get(id) !== false);
+}
+
 async function notifyChampionshipUsers({ championshipId, excludeUserId, category, title, body, type = 'info', link = null }) {
   const { data: participants, error: participantsError } = await db
     .from('fantasy_teams')
@@ -100,21 +123,9 @@ async function notifyChampionshipUsers({ championshipId, excludeUserId, category
 
   if (userIds.length === 0) return false;
 
-  const { data: allSettings, error: settingsError } = await db
-    .from('user_notification_settings')
-    .select(`user_id, ${category}`)
-    .eq('championship_id', championshipId)
-    .in('user_id', userIds);
+  const allowedUserIds = await filterByNotificationSettings(userIds, championshipId, category);
 
-  if (settingsError) {
-    console.error('Failed to fetch notification settings:', settingsError);
-    return false;
-  }
-
-  const settingsMap = new Map((allSettings || []).map(s => [s.user_id, s[category]]));
-
-  const notifications = userIds
-    .filter(id => settingsMap.get(id) !== false)
+  const notifications = allowedUserIds
     .map(userId => ({
       user_id: userId,
       championship_id: championshipId,
@@ -201,6 +212,7 @@ module.exports = {
   markAsRead,
   markAllAsRead,
   notifyChampionshipUsers,
+  filterByNotificationSettings,
   getNotificationSettings,
   upsertNotificationSettings,
   deleteReadNotifications
