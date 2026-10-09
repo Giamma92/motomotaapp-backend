@@ -147,16 +147,22 @@ async function notifyChampionshipUsers({ championshipId, excludeUserId, category
     return false;
   }
 
-  sendPushToMultipleUsers(notifications.map(n => n.user_id), {
-    notification: {
-      title,
-      body: body || title,
-      data: { link, category, championshipId },
-      icon: '/favicon.ico',
-      badge: '/favicon.ico',
-      vibrate: [200, 100, 200]
-    }
-  }).catch(err => console.error('Failed to send push notifications:', err));
+  // Awaited on purpose: on serverless hosts (Vercel) work that outlives the
+  // response can be frozen, silently dropping the pushes.
+  try {
+    await sendPushToMultipleUsers(notifications.map(n => n.user_id), {
+      notification: {
+        title,
+        body: body || title,
+        data: { link, category, championshipId },
+        icon: '/favicon.ico',
+        badge: '/favicon.ico',
+        vibrate: [200, 100, 200]
+      }
+    });
+  } catch (err) {
+    console.error('Failed to send push notifications:', err);
+  }
 
   return true;
 }

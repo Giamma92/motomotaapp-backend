@@ -234,8 +234,9 @@ async function calculateAndPersistStandings(championshipId, calendarId, { force 
 
     // Standing change notifications: build per-user messages, respect the
     // per-user settings, verify the insert result (supabase never throws) and
-    // push to the affected devices.
-    (async () => {
+    // push to the affected devices. The promise is awaited before returning so
+    // serverless hosts cannot freeze the sends mid-flight.
+    const standingChangeNotifications = (async () => {
       try {
         const { data: oldStandings, error: standingsError } = await db
           .from('standings')
@@ -275,18 +276,22 @@ async function calculateAndPersistStandings(championshipId, calendarId, { force 
         const { error: insertError } = await db.from('notifications').insert(notifs);
         if (insertError) throw insertError;
 
-        notifs.forEach(n => {
-          sendPushToUser(n.user_id, {
-            notification: {
-              title: n.title,
-              body: n.title,
-              data: { link: n.link, category: 'standing_change', championshipId },
-              icon: '/favicon.ico',
-              badge: '/favicon.ico',
-              vibrate: [200, 100, 200]
-            }
-          }).catch(err => console.error('Failed to send standing change push:', err));
-        });
+        for (const n of notifs) {
+          try {
+            await sendPushToUser(n.user_id, {
+              notification: {
+                title: n.title,
+                body: n.title,
+                data: { link: n.link, category: 'standing_change', championshipId },
+                icon: '/favicon.ico',
+                badge: '/favicon.ico',
+                vibrate: [200, 100, 200]
+              }
+            });
+          } catch (err) {
+            console.error('Failed to send standing change push:', err);
+          }
+        }
       } catch (err) {
         console.error('Failed to send standing change notifications:', err);
       }
@@ -319,6 +324,8 @@ async function calculateAndPersistStandings(championshipId, calendarId, { force 
     } catch (err) {
       console.error('Failed to send score update notification:', err);
     }
+
+    await standingChangeNotifications;
 
     return { ok: true, results, scoringContext: effectiveScoringContext };
 }

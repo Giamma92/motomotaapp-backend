@@ -98,7 +98,12 @@ async function sendPushToUser(userId, payload) {
   const results = await Promise.allSettled(
     subscriptions.map(sub =>
       webpush.sendNotification(sub, JSON.stringify(payload)).catch(err => {
-        if (err.statusCode === 410 || err.statusCode === 404) {
+        // 410/404: subscription gone. 403 (FCM) and Apple's 400
+        // VapidPkHashMismatch mean the subscription was created with a
+        // different VAPID key pair: it can never succeed again, so drop it
+        // and let the client re-subscribe with the current key.
+        const appleKeyMismatch = err.statusCode === 400 && /VapidPkHashMismatch/i.test(err.body || '');
+        if (err.statusCode === 410 || err.statusCode === 404 || err.statusCode === 403 || appleKeyMismatch) {
           return { expired: true, endpoint: sub.endpoint };
         }
         console.error('Push send error:', err.message);
