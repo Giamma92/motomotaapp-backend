@@ -76,7 +76,11 @@ app.use((err, req, res, next) => {
 
 // Add more endpoints (teams, races, leaderboard) here...
 
-// Start server
-app.listen(port, () => {
-  console.log(`Backend running on http://localhost:${port}`);
-});
+// Start server when executed directly (local development)
+if (require.main === module) {
+  app.listen(port, () => {
+    console.log(`Backend running on http://localhost:${port}`);
+  });
+}
+
+module.exports = app;

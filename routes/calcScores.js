@@ -222,6 +222,20 @@ async function calculateAndPersistStandings(championshipId, calendarId, { force 
     }
 
     const aggregatedStandings = buildAggregatedStandings(championshipId, fantasyTeams, allEntries);
+
+    // Snapshot existing positions BEFORE updating standings so we can detect movements
+    let oldPos = new Map();
+    try {
+        const { data: oldStandings, error: standingsError } = await db
+            .from('standings')
+            .select('user_id, position')
+            .eq('championship_id', championshipId);
+        if (!standingsError && Array.isArray(oldStandings)) {
+            oldPos = new Map(oldStandings.map(s => [s.user_id, s.position]));
+        }
+    } catch (err) {
+        console.error('Error fetching old standings for notifications:', err);
+    }
     const standingsUpdated = await updateStandings(aggregatedStandings);
     if (!standingsUpdated) {
         await upsertStandingsRun({
@@ -238,14 +252,6 @@ async function calculateAndPersistStandings(championshipId, calendarId, { force 
     // serverless hosts cannot freeze the sends mid-flight.
     const standingChangeNotifications = (async () => {
       try {
-        const { data: oldStandings, error: standingsError } = await db
-          .from('standings')
-          .select('user_id, position')
-          .eq('championship_id', championshipId);
-
-        if (standingsError) throw standingsError;
-
-        const oldPos = new Map((oldStandings || []).map(s => [s.user_id, s.position]));
         const changed = aggregatedStandings.filter(a => {
           const prev = oldPos.get(a.user_id);
           return prev && prev !== a.position;
@@ -296,6 +302,7 @@ async function calculateAndPersistStandings(championshipId, calendarId, { force 
         console.error('Failed to send standing change notifications:', err);
       }
     })();
+    await standingChangeNotifications;
 
     await upsertStandingsRun({
         ...runPayload,

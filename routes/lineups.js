@@ -216,15 +216,17 @@ router.put('/championship/:championship_id/lineups', authMiddleware, async (req,
       return res.status(500).json({ error: error.message });
     }
 
-    notifyLineupPlaced({
-      championshipId,
-      userId,
-      calendarId: calendar_id,
-      qualifyingRiderId: qualifying_rider_id,
-      raceRiderId: race_rider_id
-    }).catch(notificationError => {
+    try {
+      await notifyLineupPlaced({
+        championshipId,
+        userId,
+        calendarId: calendar_id,
+        qualifyingRiderId: qualifying_rider_id,
+        raceRiderId: race_rider_id
+      });
+    } catch (notificationError) {
       console.error('Failed to send lineup Telegram notification:', notificationError);
-    });
+    }
 
     // Notify the other participants (in-app bell + push), respecting their
     // notification settings. Only on first save, so edits don't spam everyone.

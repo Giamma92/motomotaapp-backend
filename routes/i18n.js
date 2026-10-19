@@ -101,10 +101,20 @@ router.put('/i18n/new', authMiddleware, authorizeRoles('Admin'), async (req, res
       return res.status(500).json({ error: keyError.message });
     }
 
+    const { data: lang, error: langError } = await db
+      .from('languages')
+      .select('id')
+      .eq('code', code)
+      .maybeSingle();
+
+    if (langError || !lang) {
+      return res.status(400).json({ error: `Language '${code}' not found or inactive` });
+    }
+
     const { data, error } = await db
       .from('i18n_translations')
       .upsert({
-          language_id: code == 'en' ? 1 : 2,
+          language_id: lang.id,
           key_id: keyData[0].id,
           value: value,
           updated_at: new Date().toISOString()

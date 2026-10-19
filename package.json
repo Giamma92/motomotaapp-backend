@@ -3,8 +3,6 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "postinstall": "npx puppeteer browsers install chrome",
-    "install-deps": "bash install-dependencies.sh",
     "test": "echo \"Error: no test specified\" && exit 1",
     "build": "echo \"No build step required\"",
     "start": "node index.js",
@@ -15,18 +13,16 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
-    "@sparticuz/chromium-min": "^143.0.4",
-    "@supabase/supabase-js": "^2.98.0",
+    "@supabase/supabase-js": "^2.109.0",
     "cors": "^2.8.6",
     "dotenv": "^17.3.1",
     "express": "^5.2.1",
     "jsonwebtoken": "^9.0.3",
-    "pg": "^8.19.0",
-    "puppeteer-core": "^24.37.5",
-    "web-push": "^3.6.7"
+    "web-push": "^3.6.7",
+    "ws": "^8.22.0"
   },
   "devDependencies": {
     "nodemon": "^3.1.14",
-    "supabase": "^2.76.15"
+    "supabase": "^2.121.0"
   }
 }

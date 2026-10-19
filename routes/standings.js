@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const authMiddleware = require('../middleware/authMiddleware');
+const authorizeRoles = require('../middleware/authorizeRoles');
 const db = require('../models/db');
 
 // GET /championship/:championship_id/standings
@@ -140,8 +141,8 @@ router.get('/championship/:championship_id/standings-breakdown', authMiddleware,
 });
 
 // Submit a standing result
-router.post('/standings', authMiddleware, async (req, res) => {
-    const { user_id, race_id, position } = req.body;
+router.post('/standings', authMiddleware, authorizeRoles('Admin'), async (req, res) => {
+    const { user_id, championship_id, position, score } = req.body;
     const { data, error } = await db
       .from('standings')
       .insert([{ user_id, championship_id, position, score }]);

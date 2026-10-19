@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const authMiddleware = require('../middleware/authMiddleware');
+const authorizeRoles = require('../middleware/authorizeRoles');
 const db = require('../models/db');
 const { DEFAULT_CHAMPIONSHIP_TIMEZONE, normalizeTimeZone } = require('../utils/championshipTime');
 
@@ -41,7 +42,7 @@ router.get('/championship/:id/config', authMiddleware, async (req, res) => {
 });
 
 // POST/UPDATE configuration
-router.post('/championship/:id/config', authMiddleware, async (req, res) => {
+router.post('/championship/:id/config', authMiddleware, authorizeRoles('Admin'), async (req, res) => {
   const championshipId = req.params.id;
   try {
     const payload = {

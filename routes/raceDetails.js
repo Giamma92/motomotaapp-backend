@@ -295,7 +295,7 @@ router.post('/championship/:championship_id/races/:calendar_id/bets/:kind/outcom
 
         const table = kind === 'sprint' ? 'sprint_bets' : 'race_bets';
 
-        const query = db
+        let query = db
             .from(table)
             .update({ outcome: outcome ? 'true' : 'false' })
             .eq('championship_id', championshipId)

@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const authMiddleware = require('../middleware/authMiddleware');
+const authorizeRoles = require('../middleware/authorizeRoles');
 const db = require('../models/db');
 
 // GET all riders (you might pre-populate this table)
@@ -11,7 +12,7 @@ router.get('/riders', authMiddleware, async (req, res) => {
 });
 
 // POST to create a new rider (if needed)
-router.post('/riders', authMiddleware, async (req, res) => {
+router.post('/riders', authMiddleware, authorizeRoles('Admin'), async (req, res) => {
   const { first_name, last_name } = req.body;
     const { data, error } = await db
         .from('riders')
