@@ -55,6 +55,48 @@ router.post('/championship/:id/calendar/:calendar_id/recalculate-scores/', authM
     });
 });
 
+router.post('/championship/:id/recalculate-all', authMiddleware, authorizeRoles('Admin'), async (req, res) => {
+    const championshipId = Number(req.params.id);
+    if (!Number.isInteger(championshipId)) {
+        return res.status(400).json({ error: 'championship_id must be an integer' });
+    }
+
+    try {
+        const { data: races, error } = await db
+            .from('calendar')
+            .select('id, race_order, event_date, cancelled')
+            .eq('championship_id', championshipId)
+            .eq('cancelled', false)
+            .order('race_order', { ascending: true });
+
+        if (error) return res.status(500).json({ error: error.message });
+
+        const today = new Date().toISOString().split('T')[0];
+        const concludedRaces = (races || []).filter(r => r.event_date <= today);
+
+        const resultsSummary = [];
+        for (const race of concludedRaces) {
+            await invalidateRaceScores(championshipId, race.id);
+            const calcRes = await calculateAndPersistStandings(championshipId, race.id, { force: true });
+            resultsSummary.push({
+                calendarId: race.id,
+                raceOrder: race.race_order,
+                ok: calcRes.ok,
+                usersCount: calcRes.ok ? calcRes.results?.length : 0
+            });
+        }
+
+        res.json({
+            success: true,
+            totalConcluded: concludedRaces.length,
+            recalculated: resultsSummary
+        });
+    } catch (err) {
+        console.error('Error in recalculate-all:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 function parseIds(championshipIdRaw, calendarIdRaw) {
     const championshipId = Number(championshipIdRaw);
     const calendarId = Number(calendarIdRaw);
@@ -1296,3 +1338,6 @@ async function updateStandings(standingsUpdates) {
 }
 
 module.exports = router;
+module.exports.calculateAndPersistStandings = calculateAndPersistStandings;
+module.exports.invalidateRaceScores = invalidateRaceScores;
+module.exports.loadStandingsRun = loadStandingsRun;

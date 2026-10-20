@@ -29,6 +29,8 @@ const i18nRoutes = require('./routes/i18n');
 const notificationsRoutes = require('./routes/notifications');
 const notificationSettingsRoutes = require('./routes/notificationSettings');
 const pushSubscriptionsRoutes = require('./routes/pushSubscriptions');
+const autoScoreRoutes = require('./routes/autoScore');
+const autoScoreScheduler = require('./services/autoScoreScheduler');
 
 
 // Define routes
@@ -54,6 +56,7 @@ app.use('/api', i18nRoutes);
 app.use('/api', notificationsRoutes);
 app.use('/api', notificationSettingsRoutes);
 app.use('/api', pushSubscriptionsRoutes);
+app.use('/api', autoScoreRoutes);
 
 // Health-check route
 app.get('/', (req, res) => {
@@ -80,6 +83,8 @@ app.use((err, req, res, next) => {
 if (require.main === module) {
   app.listen(port, () => {
     console.log(`Backend running on http://localhost:${port}`);
+    // Start automatic scoring scheduler (checks every 10 minutes)
+    autoScoreScheduler.start();
   });
 }
 

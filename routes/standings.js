@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const authMiddleware = require('../middleware/authMiddleware');
 const authorizeRoles = require('../middleware/authorizeRoles');
+const { attachAliases } = require('../services/userMetaService');
 const db = require('../models/db');
 
 // GET /championship/:championship_id/standings
@@ -13,7 +14,7 @@ router.get('/championship/:championship_id/standings', authMiddleware, async (re
   try {
       const { data, error } = await db
           .from('standings')
-          .select('id, user_id(id, first_name, last_name), championship_id, position, score')
+          .select('id, user_id(id, first_name, last_name, profile_image), championship_id, position, score')
           .eq('championship_id', championshipId)
           .order('score', { ascending: false });
 
@@ -26,6 +27,7 @@ router.get('/championship/:championship_id/standings', authMiddleware, async (re
           return res.status(500).json({ error: 'Internal server error' });
       }
 
+      await attachAliases(data, function(d) { return d && d.user_id ? d.user_id.id : null; });
       res.json(data);
   } catch (err) {
       console.error('Unexpected error:', err);
@@ -78,12 +80,12 @@ router.get('/championship/:championship_id/standings-breakdown', authMiddleware,
                 race_order,
                 event_date,
                 cancelled,
-                race_id(name,location)
+                race_id(name,location,country)
               `)
               .in('id', calendarIds),
           db
               .from('users')
-              .select('id, first_name, last_name')
+              .select('id, first_name, last_name, profile_image')
               .in('id', userIds)
       ]);
 
@@ -107,7 +109,7 @@ router.get('/championship/:championship_id/standings-breakdown', authMiddleware,
               race_order: null,
               event_date: null,
               cancelled: false,
-              race_id: { name: 'Gara', location: '' }
+              race_id: { name: 'Gara', location: '', country: '' }
           },
           user_id: userMap.get(String(entry.user_id)) || {
               id: String(entry.user_id),
@@ -133,6 +135,7 @@ router.get('/championship/:championship_id/standings-breakdown', authMiddleware,
           return leftName.localeCompare(rightName);
       });
 
+      await attachAliases(sorted, function(s) { return s && s.user_id ? s.user_id.id : null; });
       res.json(sorted);
   } catch (err) {
       console.error('Unexpected error fetching standings breakdown:', err);

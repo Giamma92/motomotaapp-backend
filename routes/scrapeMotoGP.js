@@ -225,120 +225,121 @@ function buildUpserts(merged, championshipId, calendarId, riderNumberToId, exist
     }
     return out;
 }
+async function syncMotoGPResults(championshipId, calendarId, doUpsert = true) {
+    // 1) read championship year & event code from your DB
+    const { data: champ, error: ce } = await db
+        .from("championships")
+        .select("year")
+        .eq("id", championshipId)
+        .maybeSingle();
+    if (ce || !champ) throw new Error("championship not found");
 
-/**
- * GET /championship/:id/calendar/:calendar_id/motogp-results/?upsert=true|false
- * Returns merged results (Q1, Q2, SPR, RAC) from Pulselive.
- * If upsert=true, also writes into motogp_results (on conflict (championship_id, calendar_id, rider_id)).
- */
-router.get(
-"/championship/:id/calendar/:calendar_id/motogp-results/",
-authMiddleware,
-async (req, res) => {
-    try {
-        const championshipId = Number(req.params.id);
-        const calendarId = Number(req.params.calendar_id);
-        const doUpsert = String(req.query.upsert || "").toLowerCase() === "true";
+    const { data: cal, error: cale } = await db
+        .from("calendar")
+        .select("race_id(name,location,country)")
+        .eq("id", calendarId)
+        .maybeSingle();
+    if (cale || !cal || !cal.race_id)
+        throw new Error("calendar not found");
 
-        // 1) read championship year & event code from your DB
-        const { data: champ, error: ce } = await db
-            .from("championships")
-            .select("year")
-            .eq("id", championshipId)
-            .maybeSingle();
-        if (ce || !champ) return res.status(400).json({ error: "championship not found" });
+    const eventCode = String(cal.race_id.country).toUpperCase();
+    if (!eventCode) throw new Error("event code missing");
 
-        const { data: cal, error: cale } = await db
-            .from("calendar")
-            .select("race_id(name,location,country)")
-            .eq("id", calendarId)
-            .maybeSingle();
-        if (cale || !cal || !cal.race_id)
-            return res.status(400).json({ error: "calendar not found" });
+    // 2) Pulselive lookups
+    const seasonUuid = await getSeasonUuidByYear(Number(champ.year));
+    const event = await getEventByCode(seasonUuid, eventCode);
+    const sessions = await getSessions(event.id, MOTOGP_CATEGORY_UUID);
 
-        const eventCode = String(cal.race_id.country).toUpperCase();
-        if (!eventCode) return res.status(400).json({ error: "event code missing" });
+    const find = (t) => {
+        let s;
+        if (t === 'Q1' || t === 'Q2') {
+            const n = (t === "Q1") ? 1 : (t === "Q2") ? 2 : null;
+            s = sessions.find((x) => String(x.type || "").toUpperCase() === String(t).substring(0,1) && x.number === n);
+        } else if (t === 'RAC') {
+            const racSessions = sessions.filter((x) =>
+                String(x.type || "").toUpperCase() === "RAC"
+            );
+            s = racSessions.sort((a, b) => (Number(b.number) || 0) - (Number(a.number) || 0))[0];
+        } else {
+            s = sessions.find((x) => String(x.type || "").toUpperCase() === String(t));
+        }
+        return s && s.id;
+    };
+    const [q1Id, q2Id, sprId, racId] = ["Q1", "Q2", "SPR", "RAC"].map(find);
 
-        // 2) Pulselive lookups
-        const seasonUuid = await getSeasonUuidByYear(Number(champ.year));
-        const event = await getEventByCode(seasonUuid, eventCode);
-        const sessions = await getSessions(event.id, MOTOGP_CATEGORY_UUID);
+    const [q1Raw, q2Raw, sprRaw, racRaw] = await Promise.all([
+        getClassification(q1Id),
+        getClassification(q2Id),
+        getClassification(sprId),
+        getClassification(racId),
+    ]);
 
-        const find = (t) => {
-            
-            let s;
-            if (t === 'Q1' || t === 'Q2') {
-                const n = (t === "Q1") ? 1 : (t === "Q2") ? 2 : null;
-                s = sessions.find((x) => String(x.type || "").toUpperCase() === String(t).substring(0,1) && x.number === n);
-            } else if (t === 'RAC') {
-                // Pulselive uses type="RAC" + number field (1, 2, 3…) for multi-race weekends.
-                // Pick the session with the highest number among all type=RAC sessions.
-                const racSessions = sessions.filter((x) =>
-                    String(x.type || "").toUpperCase() === "RAC"
-                );
-                s = racSessions.sort((a, b) => (Number(b.number) || 0) - (Number(a.number) || 0))[0];
-            } else {
-                s = sessions.find((x) => String(x.type || "").toUpperCase() === String(t));
-            }
-            return s && s.id;
-        };
-        const [q1Id, q2Id, sprId, racId] = ["Q1", "Q2", "SPR", "RAC"].map(find);
+    const q1Adj = adjustQ1(q1Raw);
+    const merged = mergeSessions(q1Adj, q2Raw, sprRaw, racRaw);
 
-        const [q1Raw, q2Raw, sprRaw, racRaw] = await Promise.all([
-            getClassification(q1Id),
-            getClassification(q2Id),
-            getClassification(sprId),
-            getClassification(racId),
-        ]);
-
-        const q1Adj = adjustQ1(q1Raw);
-        const merged = mergeSessions(q1Adj, q2Raw, sprRaw, racRaw);
-
-        // 3) Optional upsert into motogp_results
-        const userRoleNames = req.roles || [];
-        const hasRoleAdmin = userRoleNames.includes("Admin");
-        let upserted = 0;
-        if (doUpsert && hasRoleAdmin) {
-
-            const { data: riders } = await db
+    // 3) Optional upsert into motogp_results
+    let upserted = 0;
+    if (doUpsert) {
+        const { data: riders } = await db
             .from("championship_riders")
             .select("rider_id(id, number)")
             .eq("championship_id", championshipId);
 
-            const riderNumberToId = new Map();
-            (riders || []).forEach((r) => {
+        const riderNumberToId = new Map();
+        (riders || []).forEach((r) => {
             if (r && r.rider_id && r.rider_id.number)
                 riderNumberToId.set(Number(r.rider_id.number), r.rider_id.id);
-            });
-            const { data: existingResults } = await db
+        });
+        const { data: existingResults } = await db
+            .from("motogp_results")
+            .select("rider_id,qualifying_scoring_position,qualifying_scoring_points,qualifying_scoring_source")
+            .eq("championship_id", championshipId)
+            .eq("calendar_id", calendarId);
+        const existingByRider = new Map((existingResults || []).map((row) => [Number(row.rider_id), row]));
+        const rows = buildUpserts(merged, championshipId, calendarId, riderNumberToId, existingByRider);
+
+        if (rows.length) {
+            const { error } = await db
                 .from("motogp_results")
-                .select("rider_id,qualifying_scoring_position,qualifying_scoring_points,qualifying_scoring_source")
-                .eq("championship_id", championshipId)
-                .eq("calendar_id", calendarId);
-            const existingByRider = new Map((existingResults || []).map((row) => [Number(row.rider_id), row]));
-            const rows = buildUpserts(merged, championshipId, calendarId, riderNumberToId, existingByRider);
-
-            if (rows.length) {
-                const { error } = await db
-                    .from("motogp_results")
-                    .upsert(rows, { onConflict: "championship_id,calendar_id,rider_id" });
-                if (error) throw error;
-                upserted = rows.length;
-            }
+                .upsert(rows, { onConflict: "championship_id,calendar_id,rider_id" });
+            if (error) throw error;
+            upserted = rows.length;
         }
+    }
 
-        return res.json({
-            meta: {
+    const hasRaceClassification = Array.isArray(racRaw?.classification) && racRaw.classification.length > 0;
+    const hasSprintClassification = Array.isArray(sprRaw?.classification) && sprRaw.classification.length > 0;
+
+    return {
+        meta: {
             championshipId,
             calendarId,
             year: Number(champ.year),
             eventCode,
             pulselive: { seasonUuid, eventUuid: event.id },
-            },
-            sessions: { Q1: q1Adj, Q2: q2Raw, SPR: sprRaw, RAC: racRaw },
-            merged,
-            upserted,
-        });
+        },
+        sessions: { Q1: q1Adj, Q2: q2Raw, SPR: sprRaw, RAC: racRaw },
+        merged,
+        upserted,
+        hasRaceClassification,
+        hasSprintClassification
+    };
+}
+
+// GET /championship/:id/calendar/:calendar_id/motogp-results/?upsert=true|false
+router.get(
+    "/championship/:id/calendar/:calendar_id/motogp-results/",
+    authMiddleware,
+    async (req, res) => {
+        try {
+            const championshipId = Number(req.params.id);
+            const calendarId = Number(req.params.calendar_id);
+            const userRoleNames = req.roles || [];
+            const hasRoleAdmin = userRoleNames.includes("Admin");
+            const doUpsert = String(req.query.upsert || "").toLowerCase() === "true" && hasRoleAdmin;
+
+            const result = await syncMotoGPResults(championshipId, calendarId, doUpsert);
+            return res.json(result);
         } catch (err) {
             return res.status(502).json({ error: (err && err.message) || String(err) });
         }
@@ -346,3 +347,4 @@ async (req, res) => {
 );
 
 module.exports = router;
+module.exports.syncMotoGPResults = syncMotoGPResults;

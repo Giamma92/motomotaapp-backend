@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const db = require('../models/db'); // Your PostgreSQL connection pool
 const jwt = require('jsonwebtoken');
+const authMiddleware = require('../middleware/authMiddleware');
 
 // POST /api/login
 router.post('/login', async (req, res) => {
@@ -75,5 +76,45 @@ router.post('/login', async (req, res) => {
     }
 });
 
+
+
+// POST /api/refresh-token
+router.post('/refresh-token', authMiddleware, async (req, res) => {
+    try {
+        const username = req.username;
+        let { data: user, error } = await db
+            .from('users')
+            .select('*')
+            .eq('id', username)
+            .single();
+
+        if (error || !user) {
+            return res.status(401).json({ error: 'User not found' });
+        }
+
+        const { data: roles } = await db
+            .from('user_roles')
+            .select('user_id, role_id(id, description)')
+            .eq('user_id', username);
+
+        const token = jwt.sign(
+            {
+                userId: user.profile_id,
+                username: user.id,
+                email: user.email,
+                firstName: user.first_name,
+                lastName: user.last_name,
+                roles: (roles || []).map(r => r.role_id?.description)
+            },
+            process.env.JWT_SECRET,
+            { expiresIn: '1h' }
+        );
+
+        res.json({ token });
+    } catch (err) {
+        console.error('Refresh token error:', err);
+        res.status(500).json({ error: 'Failed to refresh token' });
+    }
+});
 
 module.exports = router;

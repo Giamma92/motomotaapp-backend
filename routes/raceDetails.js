@@ -4,6 +4,7 @@ const router = express.Router();
 const db = require('../models/db');
 const authMiddleware = require('../middleware/authMiddleware');
 const authorizeRoles = require('../middleware/authorizeRoles');
+const { getAlias, attachAliases } = require('../services/userMetaService');
 const {
     DEFAULT_CHAMPIONSHIP_TIMEZONE,
     formatSqlTimestamp,
@@ -49,7 +50,7 @@ router.get('/championship/:championship_id/race-details/:calendar_id', authMiddl
             id,
             championship_id,
             calendar_id(id,event_date,race_order,race_id(name,location)),
-            user_id(id,first_name,last_name),
+            user_id(id,first_name,last_name,profile_image),
             race_rider_id(id,first_name, last_name,number),
             qualifying_rider_id(id,first_name, last_name,number),
             inserted_at,modified_at,
@@ -77,7 +78,7 @@ router.get('/championship/:championship_id/race-details/:calendar_id', authMiddl
         const { data: sprints, error: sprintsError } = await querySprintBets.select(`id,
                 championship_id,
                 calendar_id(id,event_date,race_order,race_id(name,location)),
-            user_id(id,first_name,last_name),
+                user_id(id,first_name,last_name,profile_image),
                 rider_id(id,first_name, last_name,number),
                 position,
                 points,
@@ -109,7 +110,7 @@ router.get('/championship/:championship_id/race-details/:calendar_id', authMiddl
                 id,
                 championship_id,
                 calendar_id(id,event_date,race_order,race_id(name,location)),
-            user_id(id,first_name,last_name),
+                user_id(id,first_name,last_name,profile_image),
                 rider_id(id,first_name, last_name,number),
                 position,
                 points,
@@ -121,7 +122,7 @@ router.get('/championship/:championship_id/race-details/:calendar_id', authMiddl
             return res.status(500).json({ error: betsError.message });
         }
 
-        const { data: motogpResults, error: motogpResultsError } = await db
+        let queryMotoGp = db
             .from('motogp_results')
             .select(`
                 id,
@@ -138,8 +139,13 @@ router.get('/championship/:championship_id/race-details/:calendar_id', authMiddl
                 race_position,
                 race_points
             `)
-            .eq('championship_id', championshipId)
-            .eq('calendar_id', calendarId)
+            .eq('championship_id', championshipId);
+
+        if (!allCalendar) {
+            queryMotoGp = queryMotoGp.eq('calendar_id', calendarId);
+        }
+
+        const { data: motogpResults, error: motogpResultsError } = await queryMotoGp
             .order('qualifying_position', { ascending: true, nullsFirst: false });
 
         if (motogpResultsError) {
@@ -147,7 +153,13 @@ router.get('/championship/:championship_id/race-details/:calendar_id', authMiddl
             return res.status(500).json({ error: motogpResultsError.message });
         }
 
-         // Return the combined results
+        await Promise.all([
+            attachAliases(lineups, l => l?.user_id?.id),
+            attachAliases(sprints, s => s?.user_id?.id),
+            attachAliases(bets, b => b?.user_id?.id)
+        ]);
+
+        // Return the combined results
         res.json({ lineups, sprints, bets, motogpResults });
         } 
         catch (err) {
@@ -267,6 +279,198 @@ router.get('/championship/:championship_id/races/:calendar_id/fill-missing-lineu
     } catch (e) {
         console.error(e);
         return res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
+// POST alias for fill-missing-lineups
+router.post('/championship/:championship_id/races/:calendar_id/fill-missing-lineups', authMiddleware, authorizeRoles('Admin'), async (req, res) => {
+    const { championship_id, calendar_id } = req.params;
+    req.url = `/championship/${championship_id}/races/${calendar_id}/fill-missing-lineups`;
+    router.handle(req, res);
+});
+
+// GET /api/championship/:championship_id/races/:calendar_id/submission-status
+// Detailed overview of who has and has not submitted lineups and bets for a round
+router.get('/championship/:championship_id/races/:calendar_id/submission-status', authMiddleware, authorizeRoles('Admin'), async (req, res) => {
+    try {
+        const { championship_id, calendar_id } = req.params;
+
+        const [teamsRes, lineupsRes, sprintBetsRes, raceBetsRes] = await Promise.all([
+            db.from('fantasy_teams')
+              .select('id, name, user_id, user:user_id(id, first_name, last_name, email, profile_image)')
+              .eq('championship_id', championship_id),
+            db.from('lineups')
+              .select('id, user_id, qualifying_rider_id(id, number, first_name, last_name), race_rider_id(id, number, first_name, last_name), automatically_inserted')
+              .eq('championship_id', championship_id)
+              .eq('calendar_id', calendar_id),
+            db.from('sprint_bets')
+              .select('id, user_id, position, points, outcome, rider_id(id, number, first_name, last_name)')
+              .eq('championship_id', championship_id)
+              .eq('calendar_id', calendar_id),
+            db.from('race_bets')
+              .select('id, user_id, position, points, outcome, rider_id(id, number, first_name, last_name)')
+              .eq('championship_id', championship_id)
+              .eq('calendar_id', calendar_id)
+        ]);
+
+        if (teamsRes.error) return res.status(500).json({ error: teamsRes.error.message });
+
+        const teams = teamsRes.data || [];
+        const lineups = lineupsRes.data || [];
+        const sprintBets = sprintBetsRes.data || [];
+        const raceBets = raceBetsRes.data || [];
+
+        const status = teams.map(t => {
+            const lineup = lineups.find(l => l.user_id === t.user_id);
+            const sprintBet = sprintBets.find(s => s.user_id === t.user_id);
+            const raceBet = raceBets.find(b => b.user_id === t.user_id);
+
+            return {
+                userId: t.user_id,
+                userName: t.user ? `${t.user.first_name || ''} ${t.user.last_name || ''}`.trim() : t.user_id,
+                email: t.user?.email,
+                teamName: t.name,
+                hasLineup: !!lineup,
+                lineup: lineup || null,
+                hasSprintBet: !!sprintBet,
+                sprintBet: sprintBet || null,
+                hasRaceBet: !!raceBet,
+                raceBet: raceBet || null,
+                isFullySubmitted: !!lineup && !!sprintBet && !!raceBet
+            };
+        });
+
+        res.json({
+            totalManagers: teams.length,
+            fullySubmitted: status.filter(s => s.isFullySubmitted).length,
+            missingLineup: status.filter(s => !s.hasLineup).length,
+            missingSprintBet: status.filter(s => !s.hasSprintBet).length,
+            missingRaceBet: status.filter(s => !s.hasRaceBet).length,
+            managers: status
+        });
+    } catch (err) {
+        console.error('Error fetching submission status:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// POST /api/championship/:championship_id/races/:calendar_id/fill-missing-bets
+// (Admin) Auto-fills missing sprint/race bets for participants who missed them by copying latest previous bets
+router.post('/championship/:championship_id/races/:calendar_id/fill-missing-bets', authMiddleware, authorizeRoles('Admin'), async (req, res) => {
+    try {
+        const { championship_id, calendar_id } = req.params;
+
+        const { data: currRace, error: raceErr } = await db
+            .from('calendar')
+            .select('id, event_date, cancelled')
+            .eq('id', calendar_id)
+            .single();
+
+        if (raceErr || !currRace) return res.status(404).json({ error: 'Race not found' });
+        if (currRace.cancelled) return res.status(400).json({ error: 'Race is cancelled' });
+
+        const { data: teams } = await db
+            .from('fantasy_teams')
+            .select('user_id')
+            .eq('championship_id', championship_id);
+
+        const allUserIds = (teams || []).map(t => t.user_id).filter(Boolean);
+
+        const [existingSprintRes, existingRaceRes] = await Promise.all([
+            db.from('sprint_bets').select('user_id').eq('championship_id', championship_id).eq('calendar_id', calendar_id),
+            db.from('race_bets').select('user_id').eq('championship_id', championship_id).eq('calendar_id', calendar_id)
+        ]);
+
+        const sprintUserIds = new Set((existingSprintRes.data || []).map(r => r.user_id));
+        const raceUserIds = new Set((existingRaceRes.data || []).map(r => r.user_id));
+
+        const missingSprintUsers = allUserIds.filter(u => !sprintUserIds.has(u));
+        const missingRaceUsers = allUserIds.filter(u => !raceUserIds.has(u));
+
+        let sprintInserted = 0;
+        let raceInserted = 0;
+
+        if (missingSprintUsers.length > 0) {
+            const { data: prevSprint } = await db
+                .from('sprint_bets')
+                .select('user_id, rider_id, position, points, calendar_id(id, event_date)')
+                .eq('championship_id', championship_id)
+                .in('user_id', missingSprintUsers);
+
+            const latestByUser = new Map();
+            (prevSprint || [])
+                .filter(b => b.calendar_id?.event_date && b.calendar_id.event_date < currRace.event_date)
+                .sort((a, b) => b.calendar_id.event_date.localeCompare(a.calendar_id.event_date))
+                .forEach(b => {
+                    if (!latestByUser.has(b.user_id)) latestByUser.set(b.user_id, b);
+                });
+
+            const rowsToInsert = missingSprintUsers
+                .map(u => latestByUser.get(u))
+                .filter(Boolean)
+                .map(b => ({
+                    championship_id: Number(championship_id),
+                    calendar_id: Number(calendar_id),
+                    user_id: b.user_id,
+                    rider_id: b.rider_id?.id || b.rider_id,
+                    position: b.position,
+                    points: b.points
+                }));
+
+            if (rowsToInsert.length > 0) {
+                const { error: insErr, count } = await db
+                    .from('sprint_bets')
+                    .upsert(rowsToInsert, { onConflict: 'championship_id,user_id,calendar_id', count: 'exact' });
+                if (!insErr) sprintInserted = count ?? rowsToInsert.length;
+            }
+        }
+
+        if (missingRaceUsers.length > 0) {
+            const { data: prevRace } = await db
+                .from('race_bets')
+                .select('user_id, rider_id, position, points, calendar_id(id, event_date)')
+                .eq('championship_id', championship_id)
+                .in('user_id', missingRaceUsers);
+
+            const latestByUser = new Map();
+            (prevRace || [])
+                .filter(b => b.calendar_id?.event_date && b.calendar_id.event_date < currRace.event_date)
+                .sort((a, b) => b.calendar_id.event_date.localeCompare(a.calendar_id.event_date))
+                .forEach(b => {
+                    if (!latestByUser.has(b.user_id)) latestByUser.set(b.user_id, b);
+                });
+
+            const rowsToInsert = missingRaceUsers
+                .map(u => latestByUser.get(u))
+                .filter(Boolean)
+                .map(b => ({
+                    championship_id: Number(championship_id),
+                    calendar_id: Number(calendar_id),
+                    user_id: b.user_id,
+                    rider_id: b.rider_id?.id || b.rider_id,
+                    position: b.position,
+                    points: b.points
+                }));
+
+            if (rowsToInsert.length > 0) {
+                const { error: insErr, count } = await db
+                    .from('race_bets')
+                    .upsert(rowsToInsert, { onConflict: 'championship_id,user_id,calendar_id', count: 'exact' });
+                if (!insErr) raceInserted = count ?? rowsToInsert.length;
+            }
+        }
+
+        res.json({
+            success: true,
+            sprintInserted,
+            raceInserted,
+            missingSprintUsersCount: missingSprintUsers.length,
+            missingRaceUsersCount: missingRaceUsers.length,
+            message: `Inserted ${sprintInserted} sprint bets and ${raceInserted} race bets from previous rounds.`
+        });
+    } catch (err) {
+        console.error('Error filling missing bets:', err);
+        res.status(500).json({ error: err.message });
     }
 });
 
