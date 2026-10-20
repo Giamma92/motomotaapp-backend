@@ -10,12 +10,6 @@
             "dest": "index.js"
         }
     ],
-    "crons": [
-        {
-            "path": "/api/cron/auto-score",
-            "schedule": "*/10 * * * *"
-        }
-    ],
     "env": {
         "PUPPETEER_EXECUTABLE_PATH": "/usr/bin/google-chrome"
     }
