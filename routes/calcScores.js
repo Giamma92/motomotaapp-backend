@@ -209,9 +209,18 @@ async function calculateAndPersistStandings(championshipId, calendarId, { force 
         scoringContext: effectiveScoringContext
     });
 
-    if (!force && existingRun?.status === 'completed' && existingRun.source_hash === sourceHash) {
+    let runStatus = 'completed';
+    if (!effectiveScoringContext.raceSettled) {
+        if (effectiveScoringContext.sprintSettled) {
+            runStatus = 'partial_sprint';
+        } else if (effectiveScoringContext.qualifyingSettled) {
+            runStatus = 'partial_qualifying';
+        }
+    }
+
+    if (!force && existingRun?.status === runStatus && existingRun.source_hash === sourceHash) {
         console.log(`Standings already up to date for championship ${championshipId}, calendar ${calendarId}`);
-        return { ok: true, results, scoringContext: effectiveScoringContext };
+        return { ok: true, results, scoringContext: effectiveScoringContext, runStatus };
     }
 
     const entriesPayload = results.map(result => ({
@@ -348,7 +357,7 @@ async function calculateAndPersistStandings(championshipId, calendarId, { force 
 
     await upsertStandingsRun({
         ...runPayload,
-        status: 'completed',
+        status: runStatus,
         last_error: null
     });
 
@@ -361,12 +370,24 @@ async function calculateAndPersistStandings(championshipId, calendarId, { force 
         .maybeSingle();
 
       const raceName = cal?.race_id?.name || 'Gara';
+      let notifTitle = 'Punteggi aggiornati';
+      let notifBody = `I punteggi per ${raceName} sono stati calcolati.`;
+      if (effectiveScoringContext.raceSettled) {
+        notifTitle = '🏁 Classifica finale aggiornata';
+        notifBody = `I punteggi definitivi per ${raceName} sono stati calcolati.`;
+      } else if (effectiveScoringContext.sprintSettled) {
+        notifTitle = '⚡ Punteggi parziali: Sprint';
+        notifBody = `I punteggi e le scommesse Sprint per ${raceName} sono stati calcolati.`;
+      } else if (effectiveScoringContext.qualifyingSettled) {
+        notifTitle = '⏱️ Punteggi parziali: Qualifiche';
+        notifBody = `I punteggi delle qualifiche per ${raceName} sono stati calcolati.`;
+      }
       await notifyChampionshipUsers({
         championshipId,
         excludeUserId: null,
         category: 'score_update',
-        title: 'Punteggi aggiornati',
-        body: `I punteggi per ${raceName} sono stati calcolati.`,
+        title: notifTitle,
+        body: notifBody,
         type: 'info',
         link: `/standings-breakdown`
       });
@@ -411,9 +432,9 @@ function enhanceScoringContextWithResults(scoringContext, motogpResults) {
 
     return {
         ...scoringContext,
-        qualifyingSettled: Boolean(scoringContext?.qualifyingSettled || resultDrivenFlags.qualifyingSettled),
-        sprintSettled: Boolean(scoringContext?.sprintSettled || resultDrivenFlags.sprintSettled),
-        raceSettled: Boolean(scoringContext?.raceSettled || resultDrivenFlags.raceSettled)
+        qualifyingSettled: Boolean(resultDrivenFlags.qualifyingSettled),
+        sprintSettled: Boolean(resultDrivenFlags.sprintSettled),
+        raceSettled: Boolean(resultDrivenFlags.raceSettled)
     };
 }
 

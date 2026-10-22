@@ -307,6 +307,7 @@ async function syncMotoGPResults(championshipId, calendarId, doUpsert = true) {
         }
     }
 
+    const hasQualifyingClassification = (Array.isArray(q2Raw?.classification) && q2Raw.classification.length > 0) || (Array.isArray(q1Raw?.classification) && q1Raw.classification.length > 0);
     const hasRaceClassification = Array.isArray(racRaw?.classification) && racRaw.classification.length > 0;
     const hasSprintClassification = Array.isArray(sprRaw?.classification) && sprRaw.classification.length > 0;
 
@@ -321,6 +322,7 @@ async function syncMotoGPResults(championshipId, calendarId, doUpsert = true) {
         sessions: { Q1: q1Adj, Q2: q2Raw, SPR: sprRaw, RAC: racRaw },
         merged,
         upserted,
+        hasQualifyingClassification,
         hasRaceClassification,
         hasSprintClassification
     };

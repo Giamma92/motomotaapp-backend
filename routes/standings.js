@@ -71,7 +71,8 @@ router.get('/championship/:championship_id/standings-breakdown', authMiddleware,
 
       const [
           { data: calendars, error: calendarsError },
-          { data: users, error: usersError }
+          { data: users, error: usersError },
+          { data: runs, error: runsError }
       ] = await Promise.all([
           db
               .from('calendar')
@@ -86,7 +87,12 @@ router.get('/championship/:championship_id/standings-breakdown', authMiddleware,
           db
               .from('users')
               .select('id, first_name, last_name, profile_image')
-              .in('id', userIds)
+              .in('id', userIds),
+          db
+              .from('standings_runs')
+              .select('calendar_id, status')
+              .eq('championship_id', championshipId)
+              .in('calendar_id', calendarIds)
       ]);
 
       if (calendarsError) {
@@ -101,16 +107,18 @@ router.get('/championship/:championship_id/standings-breakdown', authMiddleware,
 
       const calendarMap = new Map((calendars || []).map((calendar) => [Number(calendar.id), calendar]));
       const userMap = new Map((users || []).map((user) => [String(user.id), user]));
+      const runMap = new Map((runs || []).map((run) => [Number(run.calendar_id), run.status]));
 
       const hydrated = entries.map((entry) => ({
           ...entry,
-          calendar_id: calendarMap.get(Number(entry.calendar_id)) || {
+          status: runMap.get(Number(entry.calendar_id)) || 'completed',
+          calendar_id: { ...(calendarMap.get(Number(entry.calendar_id)) || {
               id: Number(entry.calendar_id) || entry.calendar_id,
               race_order: null,
               event_date: null,
               cancelled: false,
               race_id: { name: 'Gara', location: '', country: '' }
-          },
+          }), status: runMap.get(Number(entry.calendar_id)) || 'completed' },
           user_id: userMap.get(String(entry.user_id)) || {
               id: String(entry.user_id),
               first_name: '',

@@ -1,19 +1,16 @@
 const db = require('../models/db');
 const { syncMotoGPResults } = require('../routes/scrapeMotoGP');
 const { calculateAndPersistStandings, loadStandingsRun } = require('../routes/calcScores');
-const { buildZonedDateTime, formatYyyyMmDd } = require('../utils/championshipTime');
+const { buildZonedDateTime, formatYyyyMmDd, addDaysToYyyyMmDd } = require('../utils/championshipTime');
 
 /**
- * Checks all active championships and concluded/running races to see if
- * approximately 30 minutes after the race finish the trigger should automatically
- * sync official Dorna results, compute scores, persist standings, and notify users.
+ * Checks all active championships and ongoing/concluded race weekends to
+ * automatically sync official Dorna results, compute scores, persist standings,
+ * and notify users in near-real-time at 3 specific stages:
  *
- * Timing:
- * - MotoGP main race takes ~45 minutes.
- * - "Mezz'ora dopo la gara" = raceStartTime + 45m (race) + 30m (buffer) = raceStartTime + 75m.
- * - If now >= raceStartTime + 75m (or race date has passed), it checks if scores are completed.
- * - If not completed, it fetches official MotoGP results from Dorna/Pulselive.
- * - If official results are ready, it calculates and persists standings, triggering notifications.
+ * 1) 30 min after Qualifying (Saturday morning): ~70 min from qualifications_time
+ * 2) 30 min after Sprint Race (Saturday afternoon): ~55 min from sprint_time
+ * 3) 30 min after Main Race (Sunday afternoon): ~75 min from event_time
  */
 async function checkAndExecuteAutoScoring(options = {}) {
     const logPrefix = '[AutoScoreService]';
@@ -48,7 +45,7 @@ async function checkAndExecuteAutoScoring(options = {}) {
             // Check calendar races for this championship
             let query = db
                 .from('calendar')
-                .select('id, championship_id, race_order, event_date, event_time, sprint_time, cancelled, race_id(name, location, country)')
+                .select('id, championship_id, race_order, event_date, qualifications_time, sprint_time, event_time, cancelled, race_id(name, location, country)')
                 .eq('championship_id', champ.id)
                 .eq('cancelled', false)
                 .order('race_order', { ascending: true });
@@ -61,8 +58,10 @@ async function checkAndExecuteAutoScoring(options = {}) {
             if (raceErr || !races || races.length === 0) continue;
 
             for (const race of races) {
-                // If race date is in the future (> today), skip
-                if (race.event_date > todayYmd) {
+                const dayBeforeRace = addDaysToYyyyMmDd(race.event_date, -1);
+
+                // If race weekend is in the future (> today), skip
+                if (!options.targetCalendarId && !options.force && todayYmd < dayBeforeRace) {
                     continue;
                 }
 
@@ -71,28 +70,58 @@ async function checkAndExecuteAutoScoring(options = {}) {
                     continue;
                 }
 
-                // Compute race start time and 30-min-after-finish trigger time
-                const eventTime = race.event_time || '14:00:00';
-                const raceStartTime = buildZonedDateTime(race.event_date, eventTime, 'Europe/Rome');
-
-                // Standard race duration: 45 min + 30 min after = 75 minutes
-                const triggerTimeMs = raceStartTime ? raceStartTime.getTime() + (75 * 60 * 1000) : 0;
-                const isPastRaceDate = race.event_date < todayYmd;
-                const isPastTriggerTime = now.getTime() >= triggerTimeMs;
-
-                // Only trigger if we are past the 30-min-after-finish mark or past the race day
-                if (!isPastRaceDate && !isPastTriggerTime && !options.force) {
-                    continue;
-                }
-
-                // Check if standings have already been successfully calculated
+                // Check if standings have already been successfully calculated to full completion
                 const run = await loadStandingsRun(champ.id, race.id);
-                if (!options.force && run?.status === 'completed') {
-                    // Already calculated and persisted!
+                const currentStatus = run?.status || null;
+
+                if (!options.force && currentStatus === 'completed') {
+                    // Entire race weekend has already been scored and completed!
                     continue;
                 }
 
-                console.log(`${logPrefix} Triggering scoring for Round ${race.race_order} (${race.race_id?.name || 'GP'})...`);
+                // Compute session start and trigger times
+                const tz = 'Europe/Rome';
+                const qualTime = race.qualifications_time || '10:50:00';
+                const sprintTime = race.sprint_time || '15:00:00';
+                const eventTime = race.event_time || '14:00:00';
+
+                const qualStartTime = buildZonedDateTime(dayBeforeRace, qualTime, tz);
+                const sprintStartTime = buildZonedDateTime(dayBeforeRace, sprintTime, tz);
+                const raceStartTime = buildZonedDateTime(race.event_date, eventTime, tz);
+
+                // Timings:
+                // - Qualifying: ~40 min session + 30 min buffer = 70 min from start
+                // - Sprint: ~25 min session + 30 min buffer = 55 min from start
+                // - Race: ~45 min session + 30 min buffer = 75 min from start
+                const qualTriggerMs = qualStartTime ? qualStartTime.getTime() + (70 * 60 * 1000) : 0;
+                const sprintTriggerMs = sprintStartTime ? sprintStartTime.getTime() + (55 * 60 * 1000) : 0;
+                const raceTriggerMs = raceStartTime ? raceStartTime.getTime() + (75 * 60 * 1000) : 0;
+
+                const isPastRaceDate = race.event_date < todayYmd;
+                const isRaceTime = isPastRaceDate || now.getTime() >= raceTriggerMs;
+                const isSprintTime = isRaceTime || (todayYmd === race.event_date) || now.getTime() >= sprintTriggerMs;
+                const isQualTime = isSprintTime || now.getTime() >= qualTriggerMs;
+
+                // Determine target stage
+                let targetStage = null;
+                if (isRaceTime) {
+                    targetStage = 'race';
+                } else if (isSprintTime) {
+                    if (currentStatus !== 'partial_sprint') {
+                        targetStage = 'sprint';
+                    }
+                } else if (isQualTime) {
+                    if (currentStatus !== 'partial_qualifying') {
+                        targetStage = 'qualifying';
+                    }
+                }
+
+                if (!targetStage && !options.force) {
+                    // Not yet time for next stage or already up to date
+                    continue;
+                }
+
+                console.log(`${logPrefix} Triggering scoring for Round ${race.race_order} (${race.race_id?.name || 'GP'}) - Target: ${targetStage || 'force'}...`);
 
                 // Step A: Sync official Dorna results
                 let syncResult = null;
@@ -102,16 +131,38 @@ async function checkAndExecuteAutoScoring(options = {}) {
                     console.error(`${logPrefix} Error syncing results for round ${race.race_order}:`, syncErr.message);
                 }
 
-                // Check if the race classification has been published by Dorna
-                if (!syncResult?.hasRaceClassification && !options.force) {
-                    console.log(`${logPrefix} Dorna has not yet published official race results for Round ${race.race_order}. Will retry on next check.`);
+                // Check if official results for target stage have been published by Dorna
+                let hasOfficialResults = false;
+                let missingReason = '';
+
+                if (targetStage === 'race') {
+                    hasOfficialResults = Boolean(syncResult?.hasRaceClassification);
+                    missingReason = 'Official race results not yet published by Dorna';
+                } else if (targetStage === 'sprint') {
+                    hasOfficialResults = Boolean(syncResult?.hasSprintClassification);
+                    missingReason = 'Official sprint results not yet published by Dorna';
+                } else if (targetStage === 'qualifying') {
+                    hasOfficialResults = Boolean(syncResult?.hasQualifyingClassification);
+                    missingReason = 'Official qualifying results not yet published by Dorna';
+                } else {
+                    hasOfficialResults = Boolean(
+                        syncResult?.hasRaceClassification ||
+                        syncResult?.hasSprintClassification ||
+                        syncResult?.hasQualifyingClassification
+                    );
+                    missingReason = 'No official results published yet by Dorna';
+                }
+
+                if (!hasOfficialResults && !options.force) {
+                    console.log(`${logPrefix} Dorna has not yet published ${targetStage} results for Round ${race.race_order}. Will retry on next check.`);
                     resultsSummary.push({
                         championshipId: champ.id,
                         calendarId: race.id,
                         raceOrder: race.race_order,
                         raceName: race.race_id?.name,
+                        targetStage,
                         status: 'waiting_for_official_results',
-                        message: 'Official race results not yet published by Dorna'
+                        message: missingReason
                     });
                     continue;
                 }
@@ -120,12 +171,14 @@ async function checkAndExecuteAutoScoring(options = {}) {
                 const calcResult = await calculateAndPersistStandings(champ.id, race.id, { force: true });
 
                 if (calcResult.ok) {
-                    console.log(`${logPrefix} SUCCESS: Scores calculated and persisted for Round ${race.race_order} (${race.race_id?.name})!`);
+                    console.log(`${logPrefix} SUCCESS: Scores calculated and persisted for Round ${race.race_order} (${race.race_id?.name}) [stage: ${calcResult.runStatus || targetStage}]!`);
                     resultsSummary.push({
                         championshipId: champ.id,
                         calendarId: race.id,
                         raceOrder: race.race_order,
                         raceName: race.race_id?.name,
+                        targetStage,
+                        stageAchieved: calcResult.runStatus,
                         status: 'success',
                         participantsScored: calcResult.results?.length || 0
                     });
@@ -136,6 +189,7 @@ async function checkAndExecuteAutoScoring(options = {}) {
                         calendarId: race.id,
                         raceOrder: race.race_order,
                         raceName: race.race_id?.name,
+                        targetStage,
                         status: 'error',
                         error: calcResult.error
                     });
