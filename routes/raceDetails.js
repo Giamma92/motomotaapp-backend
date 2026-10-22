@@ -391,23 +391,30 @@ router.post('/championship/:championship_id/races/:calendar_id/fill-missing-bets
         let raceInserted = 0;
 
         if (missingSprintUsers.length > 0) {
-            const { data: prevSprint } = await db
+            const { data: prevSprint, error: prevSprintErr } = await db
                 .from('sprint_bets')
                 .select('user_id, rider_id, position, points, calendar_id(id, event_date)')
                 .eq('championship_id', championship_id)
                 .in('user_id', missingSprintUsers);
 
-            const latestByUser = new Map();
+            if (prevSprintErr) {
+                console.error('Error fetching previous sprint bets:', prevSprintErr);
+                return res.status(500).json({ error: prevSprintErr.message });
+            }
+
+            const latestDateByUser = new Map();
             (prevSprint || [])
                 .filter(b => b.calendar_id?.event_date && b.calendar_id.event_date < currRace.event_date)
-                .sort((a, b) => b.calendar_id.event_date.localeCompare(a.calendar_id.event_date))
                 .forEach(b => {
-                    if (!latestByUser.has(b.user_id)) latestByUser.set(b.user_id, b);
+                    const d = b.calendar_id.event_date;
+                    const cur = latestDateByUser.get(b.user_id);
+                    if (!cur || d > cur) {
+                        latestDateByUser.set(b.user_id, d);
+                    }
                 });
 
-            const rowsToInsert = missingSprintUsers
-                .map(u => latestByUser.get(u))
-                .filter(Boolean)
+            const rowsToInsert = (prevSprint || [])
+                .filter(b => b.calendar_id?.event_date && b.calendar_id.event_date === latestDateByUser.get(b.user_id))
                 .map(b => ({
                     championship_id: Number(championship_id),
                     calendar_id: Number(calendar_id),
@@ -420,29 +427,40 @@ router.post('/championship/:championship_id/races/:calendar_id/fill-missing-bets
             if (rowsToInsert.length > 0) {
                 const { error: insErr, count } = await db
                     .from('sprint_bets')
-                    .upsert(rowsToInsert, { onConflict: 'championship_id,user_id,calendar_id', count: 'exact' });
-                if (!insErr) sprintInserted = count ?? rowsToInsert.length;
+                    .upsert(rowsToInsert, { onConflict: 'championship_id,user_id,calendar_id,rider_id', count: 'exact' });
+                if (insErr) {
+                    console.error('Error auto-filling sprint bets:', insErr);
+                    return res.status(500).json({ error: insErr.message });
+                }
+                sprintInserted = count ?? rowsToInsert.length;
             }
         }
 
         if (missingRaceUsers.length > 0) {
-            const { data: prevRace } = await db
+            const { data: prevRace, error: prevRaceErr } = await db
                 .from('race_bets')
                 .select('user_id, rider_id, position, points, calendar_id(id, event_date)')
                 .eq('championship_id', championship_id)
                 .in('user_id', missingRaceUsers);
 
-            const latestByUser = new Map();
+            if (prevRaceErr) {
+                console.error('Error fetching previous race bets:', prevRaceErr);
+                return res.status(500).json({ error: prevRaceErr.message });
+            }
+
+            const latestDateByUser = new Map();
             (prevRace || [])
                 .filter(b => b.calendar_id?.event_date && b.calendar_id.event_date < currRace.event_date)
-                .sort((a, b) => b.calendar_id.event_date.localeCompare(a.calendar_id.event_date))
                 .forEach(b => {
-                    if (!latestByUser.has(b.user_id)) latestByUser.set(b.user_id, b);
+                    const d = b.calendar_id.event_date;
+                    const cur = latestDateByUser.get(b.user_id);
+                    if (!cur || d > cur) {
+                        latestDateByUser.set(b.user_id, d);
+                    }
                 });
 
-            const rowsToInsert = missingRaceUsers
-                .map(u => latestByUser.get(u))
-                .filter(Boolean)
+            const rowsToInsert = (prevRace || [])
+                .filter(b => b.calendar_id?.event_date && b.calendar_id.event_date === latestDateByUser.get(b.user_id))
                 .map(b => ({
                     championship_id: Number(championship_id),
                     calendar_id: Number(calendar_id),
@@ -455,8 +473,12 @@ router.post('/championship/:championship_id/races/:calendar_id/fill-missing-bets
             if (rowsToInsert.length > 0) {
                 const { error: insErr, count } = await db
                     .from('race_bets')
-                    .upsert(rowsToInsert, { onConflict: 'championship_id,user_id,calendar_id', count: 'exact' });
-                if (!insErr) raceInserted = count ?? rowsToInsert.length;
+                    .upsert(rowsToInsert, { onConflict: 'championship_id,user_id,calendar_id,rider_id', count: 'exact' });
+                if (insErr) {
+                    console.error('Error auto-filling race bets:', insErr);
+                    return res.status(500).json({ error: insErr.message });
+                }
+                raceInserted = count ?? rowsToInsert.length;
             }
         }
 

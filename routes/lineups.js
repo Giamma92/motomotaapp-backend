@@ -43,12 +43,8 @@ router.get('/championship/:championship_id/lineups/:race_id', authMiddleware, as
       console.error("Error fetching lineup:", error);
       return res.status(500).json({ error: error.message });
     }
-    
-    if (data.length === 0) {
-      return res.status(404).json({ error: "Lineup not found" });
-    }
 
-    res.status(200).json(data);
+    res.status(200).json(data || []);
   } catch (err) {
     console.error("Unexpected error in lineups endpoint:", err);
     res.status(500).json({ error: "Internal server error" });
@@ -61,9 +57,17 @@ router.get('/championship/:championship_id/lineups/:race_id', authMiddleware, as
  * Expected body: { calendar_id, race_rider_id, qualifying_rider_id }
  */
 router.put('/championship/:championship_id/lineups', authMiddleware, async (req, res) => {
-  const championshipId = req.params.championship_id;
+  const championshipId = Number(req.params.championship_id);
   const userId = req.username; // attached by authMiddleware
-  const { calendar_id, race_rider_id, qualifying_rider_id } = req.body;
+  let { calendar_id, race_rider_id, qualifying_rider_id } = req.body;
+
+  calendar_id = Number(calendar_id);
+  race_rider_id = Number(race_rider_id);
+  qualifying_rider_id = Number(qualifying_rider_id);
+
+  if (!Number.isInteger(calendar_id) || !Number.isInteger(race_rider_id) || !Number.isInteger(qualifying_rider_id)) {
+    return res.status(400).json({ error: 'calendar_id, race_rider_id and qualifying_rider_id must be integers.' });
+  }
   
   try {
     // Get the formation_limit_driver from championship configuration
@@ -146,14 +150,16 @@ router.put('/championship/:championship_id/lineups', authMiddleware, async (req,
     allLineups.forEach(lineup => {
       // Count qualifying rider
       if (lineup.qualifying_rider_id) {
-        const currentCount = riderCounts.get(lineup.qualifying_rider_id) || 0;
-        riderCounts.set(lineup.qualifying_rider_id, currentCount + 1);
+        const qId = Number(lineup.qualifying_rider_id);
+        const currentCount = riderCounts.get(qId) || 0;
+        riderCounts.set(qId, currentCount + 1);
       }
       
       // Count race rider
       if (lineup.race_rider_id) {
-        const currentCount = riderCounts.get(lineup.race_rider_id) || 0;
-        riderCounts.set(lineup.race_rider_id, currentCount + 1);
+        const rId = Number(lineup.race_rider_id);
+        const currentCount = riderCounts.get(rId) || 0;
+        riderCounts.set(rId, currentCount + 1);
       }
     });
 
