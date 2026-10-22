@@ -54,6 +54,13 @@ router.post('/login', async (req, res) => {
 
         console.log(`Updated last_access for user: ${username}`);
 
+        // 🔹 Fetch user settings (championship and preferred language)
+        const { data: userSettings } = await db
+            .from('user_settings')
+            .select('championship_id, language')
+            .eq('user_id', username)
+            .maybeSingle();
+
         // 🔹 Generate a JWT token
         const token = jwt.sign(
             {
@@ -62,13 +69,17 @@ router.post('/login', async (req, res) => {
                 email: user.email,
                 firstName: user.first_name,
                 lastName: user.last_name,
-                roles: roles.map(r => r.role_id.description)
+                roles: (roles || []).map(r => r.role_id?.description)
             },
             process.env.JWT_SECRET,
             { expiresIn: '1h' }
         );
 
-        res.json({ token });
+        res.json({
+            token,
+            language: userSettings?.language || null,
+            championship_id: userSettings?.championship_id || null
+        });
 
     } catch (err) {
         console.error("Login error:", err);
