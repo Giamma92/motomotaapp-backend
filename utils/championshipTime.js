@@ -212,5 +212,6 @@ module.exports = {
   getChampionshipWindow,
   canSubmitLineup,
   canSubmitSprintBet,
-  canSubmitRaceBet
+  canSubmitRaceBet,
+  addDaysToYyyyMmDd
 };
