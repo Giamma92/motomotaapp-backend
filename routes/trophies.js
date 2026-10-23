@@ -17,17 +17,25 @@ const TROPHY_BY_POSITION = {
   3: 'season_third'
 };
 
-// Badge thresholds for bronze / silver / gold levels.
-const BADGES = [
-  { code: 'champion', icon: 'fa-trophy', thresholds: [1, 2, 3] },
-  { code: 'gp_winner', icon: 'fa-flag-checkered', thresholds: [1, 3, 10] },
-  { code: 'gp_podium', icon: 'fa-ranking-star', thresholds: [5, 15, 30] },
-  { code: 'pole_man', icon: 'fa-stopwatch', thresholds: [1, 3, 10] },
-  { code: 'sniper', icon: 'fa-bullseye', thresholds: [1, 3, 10] },
-  { code: 'sprint_king', icon: 'fa-bolt', thresholds: [1, 3, 10] },
-  { code: 'streak', icon: 'fa-fire', thresholds: [3, 5, 8] },
-  { code: 'leader', icon: 'fa-crown', thresholds: [1, 5, 10] },
-  { code: 'veteran', icon: 'fa-calendar-check', thresholds: [1, 3, 5] }
+// Season Badges (scoped to current year / single championship)
+const SEASON_BADGES = [
+  { code: 'gp_winner_season', name: 'Vincitore GP', desc: 'Gare vinte come miglior punteggio in stagione', icon: 'fa-flag-checkered', thresholds: [2, 5, 8] },
+  { code: 'gp_podium_season', name: 'Podio GP', desc: 'Gare a podio (top 3) in stagione', icon: 'fa-ranking-star', thresholds: [4, 10, 16] },
+  { code: 'pole_man_season', name: 'Pole Man', desc: 'Miglior punteggio qualifiche del sabato in stagione', icon: 'fa-stopwatch', thresholds: [2, 4, 7] },
+  { code: 'sniper_season', name: 'Cecchino Bet', desc: 'Miglior punteggio scommessa gara in stagione', icon: 'fa-bullseye', thresholds: [2, 5, 8] },
+  { code: 'sprint_king_season', name: 'Re della Sprint', desc: 'Miglior punteggio scommessa sprint in stagione', icon: 'fa-bolt', thresholds: [2, 5, 8] },
+  { code: 'streak_season', name: 'Costanza Podi', desc: 'Podi consecutivi nei GP in stagione', icon: 'fa-fire', thresholds: [3, 5, 8] },
+  { code: 'leader_season', name: 'Leader Mondiale', desc: 'Gare passate in testa alla classifica in stagione', icon: 'fa-crown', thresholds: [2, 6, 12] }
+];
+
+// Career / Global Badges (all-time, multi-year + historical data)
+const CAREER_BADGES = [
+  { code: 'champion_career', name: 'Mondiali Vinti', desc: 'Campionati vinti a fine stagione', icon: 'fa-trophy', thresholds: [1, 2, 3] },
+  { code: 'trophy_collector', name: 'Collezione Coppe', desc: 'Podi assoluti a fine campionato (1°, 2°, 3°)', icon: 'fa-award', thresholds: [1, 3, 5] },
+  { code: 'gp_winner_career', name: 'Vittorie GP Totali', desc: 'Gare vinte in carriera', icon: 'fa-flag-checkered', thresholds: [5, 15, 30] },
+  { code: 'gp_podium_career', name: 'Podi GP Totali', desc: 'Podi di tappa conquistati in carriera', icon: 'fa-ranking-star', thresholds: [10, 25, 50] },
+  { code: 'streak_career', name: 'Record Striscia', desc: 'Miglior serie di podi consecutivi in carriera', icon: 'fa-fire', thresholds: [4, 7, 12] },
+  { code: 'veteran_career', name: 'Veterano Fanta', desc: 'Campionati disputati nel corso degli anni', icon: 'fa-calendar-check', thresholds: [2, 4, 6] }
 ];
 
 // ---------------------------------------------------------------------------
@@ -411,29 +419,60 @@ router.get('/achievements/:userId', authMiddleware, async (req, res) => {
       specials: trophyList.filter((t) => t.trophy_code === 'special').length
     };
 
+    const currentChamp = championships.find((c) => !c.completed_at && c.is_active) ||
+      championships.find((c) => !c.completed_at) || championships[0];
+    const currentChampId = currentChamp ? currentChamp.id : null;
+    const currentChampYear = currentChamp ? currentChamp.year : 2026;
+
+    // Compute stats for current season only (championship_id = 5 / 2026)
+    const currentSeasonStats = currentChamp ? await computeRaceStats(userId, [currentChamp]) : raceStats;
+
     const values = {
-      champion: counts.gold,
-      gp_winner: raceStats.gpWins,
-      gp_podium: raceStats.gpPodiums,
-      pole_man: raceStats.poles,
-      sniper: raceStats.bestRaceBets,
-      sprint_king: raceStats.bestSprintBets,
-      streak: raceStats.maxTopThreeStreak,
-      leader: raceStats.racesAsLeader,
-      veteran: seasons.length
+      // Season
+      gp_winner_season: currentSeasonStats.gpWins,
+      gp_podium_season: currentSeasonStats.gpPodiums,
+      pole_man_season: currentSeasonStats.poles,
+      sniper_season: currentSeasonStats.bestRaceBets,
+      sprint_king_season: currentSeasonStats.bestSprintBets,
+      streak_season: currentSeasonStats.maxTopThreeStreak,
+      leader_season: currentSeasonStats.racesAsLeader,
+      // Career
+      champion_career: counts.gold,
+      trophy_collector: counts.gold + counts.silver + counts.bronze,
+      gp_winner_career: raceStats.gpWins,
+      gp_podium_career: raceStats.gpPodiums,
+      streak_career: raceStats.maxTopThreeStreak,
+      veteran_career: Math.max(seasons.length, trophyList.length ? new Set(trophyList.map(t => t.year).filter(Boolean)).size : 1)
     };
-    const badges = BADGES.map((b) => {
+
+    const mapBadge = (b) => {
       const value = values[b.code] || 0;
       const level = badgeLevel(value, b.thresholds);
-      return { code: b.code, icon: b.icon, value, level, thresholds: b.thresholds, next: b.thresholds[level] ?? null };
-    });
+      return {
+        code: b.code,
+        name: b.name,
+        desc: b.desc,
+        icon: b.icon,
+        value,
+        level,
+        thresholds: b.thresholds,
+        next: b.thresholds[level] ?? null,
+        maxThreshold: b.thresholds[b.thresholds.length - 1]
+      };
+    };
+
+    const seasonBadges = SEASON_BADGES.map(mapBadge);
+    const careerBadges = CAREER_BADGES.map(mapBadge);
 
     res.json({
       user: userSnapshot(usersMap.get(String(userId)), userId),
+      currentYear: currentChampYear,
       counts,
       trophies: trophyList,
       seasons,
-      badges,
+      seasonBadges,
+      careerBadges,
+      badges: [...seasonBadges, ...careerBadges], // backward compatibility
       stats: {
         seasons: seasons.length,
         racesPlayed: raceStats.racesPlayed,
