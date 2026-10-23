@@ -8,9 +8,8 @@ const db = require('../models/db');
 const { getMetadataMap } = require('../services/userMetaService');
 const { notifyChampionshipUsers, createNotification } = require('../services/notificationService');
 
-// First season really played with the app: older championships are test data
-// and are excluded from statistics and badges.
-const FIRST_SEASON_YEAR = Number(process.env.TROPHY_FIRST_YEAR || 2026);
+// First season to show in trophy history (default 2022 to cover historical championships)
+const FIRST_SEASON_YEAR = Number(process.env.TROPHY_FIRST_YEAR || 2020);
 
 const TROPHY_BY_POSITION = {
   1: 'season_champion',
@@ -46,10 +45,26 @@ async function fetchUsersMap(userIds) {
   return new Map((data || []).map((u) => [String(u.id), { ...u, alias: meta?.[u.id]?.alias || null }]));
 }
 
-function userSnapshot(user, fallbackId) {
-  return user
-    ? { id: user.id, first_name: user.first_name, last_name: user.last_name, alias: user.alias || null, profile_image: user.profile_image || null }
-    : { id: fallbackId, first_name: '', last_name: '', alias: null, profile_image: null };
+function userSnapshot(user, fallbackId, metadata = null) {
+  if (user) {
+    return {
+      id: user.id,
+      first_name: user.first_name,
+      last_name: user.last_name,
+      alias: user.alias || null,
+      profile_image: user.profile_image || null
+    };
+  }
+  if (metadata && (metadata.first_name || metadata.last_name || metadata.name || metadata.alias)) {
+    return {
+      id: fallbackId || `historical_${(metadata.first_name || metadata.name || 'user').toLowerCase().replace(/\s+/g, '_')}`,
+      first_name: metadata.first_name || metadata.name || '',
+      last_name: metadata.last_name || '',
+      alias: metadata.alias || null,
+      profile_image: metadata.profile_image || null
+    };
+  }
+  return { id: fallbackId || 'unknown', first_name: '', last_name: '', alias: null, profile_image: null };
 }
 
 /** Sorts standings rows and assigns a rank (ties share the same rank). */
@@ -268,11 +283,11 @@ router.get('/trophies/history', authMiddleware, async (req, res) => {
             trophy_code: t.trophy_code,
             position: t.final_position,
             score: Number(t.final_score || 0),
-            user: userSnapshot(usersMap.get(String(t.user_id)), t.user_id)
+            user: userSnapshot(usersMap.get(String(t.user_id)), t.user_id, t.metadata)
           })),
         specials: champTrophies
           .filter((t) => t.trophy_code === 'special')
-          .map((t) => ({ id: t.id, title: t.title, user: userSnapshot(usersMap.get(String(t.user_id)), t.user_id) })),
+          .map((t) => ({ id: t.id, title: t.title, user: userSnapshot(usersMap.get(String(t.user_id)), t.user_id, t.metadata) })),
         standings: rows.map((r) => ({
           position: r.rank,
           score: Number(r.score || 0),
