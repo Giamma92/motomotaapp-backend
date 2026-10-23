@@ -30,6 +30,7 @@ const notificationsRoutes = require('./routes/notifications');
 const notificationSettingsRoutes = require('./routes/notificationSettings');
 const pushSubscriptionsRoutes = require('./routes/pushSubscriptions');
 const autoScoreRoutes = require('./routes/autoScore');
+const trophiesRoutes = require('./routes/trophies');
 const autoScoreScheduler = require('./services/autoScoreScheduler');
 
 
@@ -57,6 +58,7 @@ app.use('/api', notificationsRoutes);
 app.use('/api', notificationSettingsRoutes);
 app.use('/api', pushSubscriptionsRoutes);
 app.use('/api', autoScoreRoutes);
+app.use('/api', trophiesRoutes);
 
 // Health-check route
 app.get('/', (req, res) => {
