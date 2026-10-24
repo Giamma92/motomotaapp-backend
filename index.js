@@ -33,6 +33,14 @@ const autoScoreRoutes = require('./routes/autoScore');
 const trophiesRoutes = require('./routes/trophies');
 const autoScoreScheduler = require('./services/autoScoreScheduler');
 
+// Keep auto-score scheduler active across both local server and serverless requests
+app.use('/api', (req, res, next) => {
+  if (!req.path.startsWith('/cron/auto-score')) {
+    autoScoreScheduler.maybeTickOnRequest();
+  }
+  next();
+});
+
 
 // Define routes
 

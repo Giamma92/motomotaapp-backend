@@ -1,7 +1,13 @@
 const db = require('../models/db');
 const { syncMotoGPResults } = require('../routes/scrapeMotoGP');
 const { calculateAndPersistStandings, loadStandingsRun } = require('../routes/calcScores');
-const { buildZonedDateTime, formatYyyyMmDd, addDaysToYyyyMmDd } = require('../utils/championshipTime');
+const {
+    DEFAULT_CHAMPIONSHIP_TIMEZONE,
+    normalizeTimeZone,
+    buildZonedDateTime,
+    formatYyyyMmDd,
+    addDaysToYyyyMmDd
+} = require('../utils/championshipTime');
 
 /**
  * Checks all active championships and ongoing/concluded race weekends to
@@ -31,16 +37,23 @@ async function checkAndExecuteAutoScoring(options = {}) {
         }
 
         const now = new Date();
-        const todayYmd = formatYyyyMmDd(now, 'Europe/Rome');
-        // 7 days ago in YYYY-MM-DD
+        // 7 days ago
         const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-        const minDateYmd = formatYyyyMmDd(sevenDaysAgo, 'Europe/Rome');
 
         for (const champ of championships) {
             // Only check active or current season championships
             if (champ.is_active === false && champ.year < now.getFullYear() && !options.targetCalendarId) {
                 continue;
             }
+
+            const { data: config } = await db
+                .from('configuration')
+                .select('timezone')
+                .eq('championship_id', champ.id)
+                .maybeSingle();
+            const tz = normalizeTimeZone(config?.timezone || DEFAULT_CHAMPIONSHIP_TIMEZONE);
+            const todayYmd = formatYyyyMmDd(now, tz);
+            const minDateYmd = formatYyyyMmDd(sevenDaysAgo, tz);
 
             // Check calendar races for this championship
             let query = db
@@ -80,7 +93,6 @@ async function checkAndExecuteAutoScoring(options = {}) {
                 }
 
                 // Compute session start and trigger times
-                const tz = 'Europe/Rome';
                 const qualTime = race.qualifications_time || '10:50:00';
                 const sprintTime = race.sprint_time || '15:00:00';
                 const eventTime = race.event_time || '14:00:00';
@@ -102,26 +114,26 @@ async function checkAndExecuteAutoScoring(options = {}) {
                 const isSprintTime = isRaceTime || (todayYmd === race.event_date) || now.getTime() >= sprintTriggerMs;
                 const isQualTime = isSprintTime || now.getTime() >= qualTriggerMs;
 
-                // Determine target stage
-                let targetStage = null;
+                // Determine desired stage based on time and current run status
+                let desiredStage = null;
                 if (isRaceTime) {
-                    targetStage = 'race';
+                    desiredStage = 'race';
                 } else if (isSprintTime) {
                     if (currentStatus !== 'partial_sprint') {
-                        targetStage = 'sprint';
+                        desiredStage = 'sprint';
                     }
                 } else if (isQualTime) {
-                    if (currentStatus !== 'partial_qualifying') {
-                        targetStage = 'qualifying';
+                    if (currentStatus !== 'partial_qualifying' && currentStatus !== 'partial_sprint') {
+                        desiredStage = 'qualifying';
                     }
                 }
 
-                if (!targetStage && !options.force) {
+                if (!desiredStage && !options.force) {
                     // Not yet time for next stage or already up to date
                     continue;
                 }
 
-                console.log(`${logPrefix} Triggering scoring for Round ${race.race_order} (${race.race_id?.name || 'GP'}) - Target: ${targetStage || 'force'}...`);
+                console.log(`${logPrefix} Triggering scoring for Round ${race.race_order} (${race.race_id?.name || 'GP'}) - Target: ${desiredStage || 'force'}...`);
 
                 // Step A: Sync official Dorna results
                 let syncResult = null;
@@ -131,36 +143,59 @@ async function checkAndExecuteAutoScoring(options = {}) {
                     console.error(`${logPrefix} Error syncing results for round ${race.race_order}:`, syncErr.message);
                 }
 
-                // Check if official results for target stage have been published by Dorna
+                const hasRace = Boolean(syncResult?.hasRaceClassification);
+                const hasSprint = Boolean(syncResult?.hasSprintClassification);
+                const hasQual = Boolean(syncResult?.hasQualifyingClassification);
+
+                // Resolve the highest stage that is both ready and represents progress over currentStatus
+                let targetStage = desiredStage;
                 let hasOfficialResults = false;
                 let missingReason = '';
 
-                if (targetStage === 'race') {
-                    hasOfficialResults = Boolean(syncResult?.hasRaceClassification);
-                    missingReason = 'Official race results not yet published by Dorna';
-                } else if (targetStage === 'sprint') {
-                    hasOfficialResults = Boolean(syncResult?.hasSprintClassification);
-                    missingReason = 'Official sprint results not yet published by Dorna';
-                } else if (targetStage === 'qualifying') {
-                    hasOfficialResults = Boolean(syncResult?.hasQualifyingClassification);
-                    missingReason = 'Official qualifying results not yet published by Dorna';
+                if (desiredStage === 'race') {
+                    if (hasRace) {
+                        targetStage = 'race';
+                        hasOfficialResults = true;
+                    } else if (hasSprint && currentStatus !== 'partial_sprint' && currentStatus !== 'completed') {
+                        targetStage = 'sprint';
+                        hasOfficialResults = true;
+                    } else if (hasQual && !currentStatus) {
+                        targetStage = 'qualifying';
+                        hasOfficialResults = true;
+                    } else {
+                        missingReason = 'Official race results not yet published by Dorna';
+                    }
+                } else if (desiredStage === 'sprint') {
+                    if (hasSprint) {
+                        targetStage = 'sprint';
+                        hasOfficialResults = true;
+                    } else if (hasQual && !currentStatus) {
+                        targetStage = 'qualifying';
+                        hasOfficialResults = true;
+                    } else {
+                        missingReason = 'Official sprint results not yet published by Dorna';
+                    }
+                } else if (desiredStage === 'qualifying') {
+                    if (hasQual) {
+                        targetStage = 'qualifying';
+                        hasOfficialResults = true;
+                    } else {
+                        missingReason = 'Official qualifying results not yet published by Dorna';
+                    }
                 } else {
-                    hasOfficialResults = Boolean(
-                        syncResult?.hasRaceClassification ||
-                        syncResult?.hasSprintClassification ||
-                        syncResult?.hasQualifyingClassification
-                    );
+                    hasOfficialResults = hasRace || hasSprint || hasQual;
+                    targetStage = hasRace ? 'race' : hasSprint ? 'sprint' : hasQual ? 'qualifying' : 'force';
                     missingReason = 'No official results published yet by Dorna';
                 }
 
                 if (!hasOfficialResults && !options.force) {
-                    console.log(`${logPrefix} Dorna has not yet published ${targetStage} results for Round ${race.race_order}. Will retry on next check.`);
+                    console.log(`${logPrefix} Dorna has not yet published ${desiredStage} results for Round ${race.race_order}. Will retry on next check.`);
                     resultsSummary.push({
                         championshipId: champ.id,
                         calendarId: race.id,
                         raceOrder: race.race_order,
                         raceName: race.race_id?.name,
-                        targetStage,
+                        targetStage: desiredStage,
                         status: 'waiting_for_official_results',
                         message: missingReason
                     });
@@ -168,7 +203,7 @@ async function checkAndExecuteAutoScoring(options = {}) {
                 }
 
                 // Step B: Calculate and persist standings
-                const calcResult = await calculateAndPersistStandings(champ.id, race.id, { force: true });
+                const calcResult = await calculateAndPersistStandings(champ.id, race.id, { force: Boolean(options.force) || true });
 
                 if (calcResult.ok) {
                     console.log(`${logPrefix} SUCCESS: Scores calculated and persisted for Round ${race.race_order} (${race.race_id?.name}) [stage: ${calcResult.runStatus || targetStage}]!`);

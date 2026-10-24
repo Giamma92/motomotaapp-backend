@@ -397,7 +397,7 @@ async function calculateAndPersistStandings(championshipId, calendarId, { force 
 
     await standingChangeNotifications;
 
-    return { ok: true, results, scoringContext: effectiveScoringContext };
+    return { ok: true, results, scoringContext: effectiveScoringContext, runStatus };
 }
 
 function hasQualifyingResults(motogpResults) {
@@ -998,6 +998,7 @@ async function ensureMissingLineupsForScoring(championshipId, calendarId, fantas
         const championshipTimeZone = normalizeTimeZone(timeZone || DEFAULT_CHAMPIONSHIP_TIMEZONE);
         const modifiedAt = formatSqlTimestamp(new Date(), championshipTimeZone);
         const existingUserIds = new Set((currentLineups || []).map(lineup => normalizeUserId(lineup.user_id)));
+        const teamByUser = new Map((fantasyTeams || []).map(team => [normalizeUserId(team.user_id?.id), team]));
         const missingUserIds = (fantasyTeams || [])
             .map(team => normalizeUserId(team.user_id?.id))
             .filter(userId => userId && !existingUserIds.has(userId));
@@ -1006,16 +1007,22 @@ async function ensureMissingLineupsForScoring(championshipId, calendarId, fantas
             return currentLineups;
         }
 
-        const previousRaceId = await loadPreviousCalendarId(championshipId, calendarId);
-        if (!previousRaceId) {
+        const { data: currentRace, error: currentRaceError } = await db
+            .from('calendar')
+            .select('id,event_date')
+            .eq('championship_id', championshipId)
+            .eq('id', calendarId)
+            .maybeSingle();
+
+        if (currentRaceError || !currentRace) {
+            console.error('Error loading current calendar race for fallback scoring:', currentRaceError);
             return currentLineups;
         }
 
         const { data: previousLineups, error: previousLineupsError } = await db
             .from('lineups')
-            .select('user_id,qualifying_rider_id,race_rider_id')
+            .select('user_id,qualifying_rider_id,race_rider_id,calendar_id(id,event_date,cancelled)')
             .eq('championship_id', championshipId)
-            .eq('calendar_id', previousRaceId)
             .in('user_id', missingUserIds);
 
         if (previousLineupsError) {
@@ -1023,15 +1030,52 @@ async function ensureMissingLineupsForScoring(championshipId, calendarId, fantas
             return null;
         }
 
-        const rows = (previousLineups || []).map(lineup => ({
-            championship_id: championshipId,
-            calendar_id: calendarId,
-            user_id: lineup.user_id,
-            qualifying_rider_id: lineup.qualifying_rider_id,
-            race_rider_id: lineup.race_rider_id,
-            modified_at: modifiedAt,
-            automatically_inserted: true
-        }));
+        const latestLineupByUser = new Map();
+        const orderedPreviousLineups = (previousLineups || [])
+            .filter(lineup =>
+                lineup.calendar_id?.event_date &&
+                !lineup.calendar_id?.cancelled &&
+                lineup.calendar_id.event_date < currentRace.event_date
+            )
+            .sort((left, right) => right.calendar_id.event_date.localeCompare(left.calendar_id.event_date));
+
+        for (const lineup of orderedPreviousLineups) {
+            const uid = normalizeUserId(lineup.user_id);
+            if (!uid || latestLineupByUser.has(uid)) continue;
+            latestLineupByUser.set(uid, lineup);
+        }
+
+        const rows = missingUserIds
+            .map(userId => {
+                const prev = latestLineupByUser.get(userId);
+                if (prev?.qualifying_rider_id && prev?.race_rider_id) {
+                    return {
+                        championship_id: championshipId,
+                        calendar_id: calendarId,
+                        user_id: userId,
+                        qualifying_rider_id: prev.qualifying_rider_id,
+                        race_rider_id: prev.race_rider_id,
+                        modified_at: modifiedAt,
+                        automatically_inserted: true
+                    };
+                }
+                const team = teamByUser.get(userId);
+                const qualRiderId = normalizeEntityId(team?.official_rider_1?.id ?? team?.official_rider_1);
+                const raceRiderId = normalizeEntityId(team?.official_rider_2?.id ?? team?.official_rider_2);
+                if (qualRiderId && raceRiderId) {
+                    return {
+                        championship_id: championshipId,
+                        calendar_id: calendarId,
+                        user_id: userId,
+                        qualifying_rider_id: qualRiderId,
+                        race_rider_id: raceRiderId,
+                        modified_at: modifiedAt,
+                        automatically_inserted: true
+                    };
+                }
+                return null;
+            })
+            .filter(Boolean);
 
         if (rows.length > 0) {
             const { error: insertError } = await db

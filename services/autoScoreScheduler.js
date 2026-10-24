@@ -1,9 +1,13 @@
 const { checkAndExecuteAutoScoring } = require('./autoScoreService');
 
+const CHECK_INTERVAL_MS = 10 * 60 * 1000;
+
 let intervalTimer = null;
 let isChecking = false;
 let lastCheckTime = null;
+let lastCheckMs = 0;
 let lastCheckResult = null;
+let opportunisticEnabled = false;
 
 async function runCheck(options = {}) {
     if (isChecking) {
@@ -12,7 +16,9 @@ async function runCheck(options = {}) {
     }
 
     isChecking = true;
-    lastCheckTime = new Date().toISOString();
+    const now = new Date();
+    lastCheckTime = now.toISOString();
+    lastCheckMs = now.getTime();
 
     try {
         const result = await checkAndExecuteAutoScoring(options);
@@ -27,19 +33,30 @@ async function runCheck(options = {}) {
     }
 }
 
-function start(intervalMs = 10 * 60 * 1000) {
+function start(intervalMs = CHECK_INTERVAL_MS) {
+    opportunisticEnabled = true;
     if (intervalTimer) return;
 
     console.log(`[AutoScoreScheduler] Service started (checking every ${intervalMs / 60000} minutes)`);
 
     // Warm-up check after 15 seconds
-    setTimeout(() => {
+    const warmup = setTimeout(() => {
         runCheck().catch(e => console.error('[AutoScoreScheduler] Startup check error:', e));
     }, 15000);
+    if (typeof warmup.unref === 'function') warmup.unref();
 
     intervalTimer = setInterval(() => {
         runCheck().catch(e => console.error('[AutoScoreScheduler] Periodic check error:', e));
     }, intervalMs);
+    if (typeof intervalTimer.unref === 'function') intervalTimer.unref();
+}
+
+function maybeTickOnRequest(intervalMs = CHECK_INTERVAL_MS) {
+    opportunisticEnabled = true;
+    if (isChecking) return;
+    if (Date.now() - lastCheckMs < intervalMs) return;
+
+    runCheck().catch(e => console.error('[AutoScoreScheduler] Opportunistic check error:', e));
 }
 
 function stop() {
@@ -52,7 +69,7 @@ function stop() {
 
 function getStatus() {
     return {
-        isRunning: !!intervalTimer,
+        isRunning: Boolean(intervalTimer || opportunisticEnabled),
         isChecking,
         lastCheckTime,
         lastCheckResult
@@ -63,5 +80,6 @@ module.exports = {
     start,
     stop,
     runCheck,
+    maybeTickOnRequest,
     getStatus
 };
