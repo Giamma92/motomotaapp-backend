@@ -35,7 +35,7 @@ const autoScoreScheduler = require('./services/autoScoreScheduler');
 
 // Keep auto-score scheduler active across both local server and serverless requests
 app.use('/api', (req, res, next) => {
-  if (!req.path.startsWith('/cron/auto-score')) {
+  if (req.method === 'GET' && /^\/championship\/\d+\/standings$/.test(req.path)) {
     autoScoreScheduler.maybeTickOnRequest();
   }
   next();

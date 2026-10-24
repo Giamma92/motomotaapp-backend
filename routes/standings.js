@@ -90,7 +90,7 @@ router.get('/championship/:championship_id/standings-breakdown', authMiddleware,
               .in('id', userIds),
           db
               .from('standings_runs')
-              .select('calendar_id, status')
+              .select('calendar_id, status, source_hash')
               .eq('championship_id', championshipId)
               .in('calendar_id', calendarIds)
       ]);
@@ -107,7 +107,18 @@ router.get('/championship/:championship_id/standings-breakdown', authMiddleware,
 
       const calendarMap = new Map((calendars || []).map((calendar) => [Number(calendar.id), calendar]));
       const userMap = new Map((users || []).map((user) => [String(user.id), user]));
-      const runMap = new Map((runs || []).map((run) => [Number(run.calendar_id), run.status]));
+      const runMap = new Map((runs || []).map((run) => {
+          const hashStr = String(run.source_hash || '');
+          let stage = run.status || 'completed';
+          if (hashStr.startsWith('partial_qualifying:')) {
+              stage = 'partial_qualifying';
+          } else if (hashStr.startsWith('partial_sprint:')) {
+              stage = 'partial_sprint';
+          } else if (hashStr.startsWith('completed:')) {
+              stage = 'completed';
+          }
+          return [Number(run.calendar_id), stage];
+      }));
 
       const hydrated = entries.map((entry) => ({
           ...entry,

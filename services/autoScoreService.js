@@ -83,11 +83,20 @@ async function checkAndExecuteAutoScoring(options = {}) {
                     continue;
                 }
 
-                // Check if standings have already been successfully calculated to full completion
+                // Check if standings have already been calculated or are currently running
                 const run = await loadStandingsRun(champ.id, race.id);
                 const currentStatus = run?.status || null;
+                const currentStage = run?.stage || (currentStatus === 'completed' ? 'completed' : null);
 
-                if (!options.force && currentStatus === 'completed') {
+                // Avoid concurrent overlapping executions within 3 minutes
+                if (!options.force && currentStatus === 'running' && run?.calculated_at) {
+                    const startedAgoMs = now.getTime() - new Date(run.calculated_at).getTime();
+                    if (Number.isFinite(startedAgoMs) && startedAgoMs >= 0 && startedAgoMs < 3 * 60 * 1000) {
+                        continue;
+                    }
+                }
+
+                if (!options.force && currentStatus === 'completed' && currentStage === 'completed') {
                     // Entire race weekend has already been scored and completed!
                     continue;
                 }
@@ -114,16 +123,16 @@ async function checkAndExecuteAutoScoring(options = {}) {
                 const isSprintTime = isRaceTime || (todayYmd === race.event_date) || now.getTime() >= sprintTriggerMs;
                 const isQualTime = isSprintTime || now.getTime() >= qualTriggerMs;
 
-                // Determine desired stage based on time and current run status
+                // Determine desired stage based on time and current stage
                 let desiredStage = null;
                 if (isRaceTime) {
                     desiredStage = 'race';
                 } else if (isSprintTime) {
-                    if (currentStatus !== 'partial_sprint') {
+                    if (currentStage !== 'partial_sprint' && currentStage !== 'completed') {
                         desiredStage = 'sprint';
                     }
                 } else if (isQualTime) {
-                    if (currentStatus !== 'partial_qualifying' && currentStatus !== 'partial_sprint') {
+                    if (currentStage !== 'partial_qualifying' && currentStage !== 'partial_sprint' && currentStage !== 'completed') {
                         desiredStage = 'qualifying';
                     }
                 }
@@ -131,6 +140,17 @@ async function checkAndExecuteAutoScoring(options = {}) {
                 if (!desiredStage && !options.force) {
                     // Not yet time for next stage or already up to date
                     continue;
+                }
+
+                // Cooldown: if we already updated standings for this race in the last 10 minutes at the same stage, skip
+                if (!options.force && run?.calculated_at) {
+                    const sinceLastMs = now.getTime() - new Date(run.calculated_at).getTime();
+                    if (Number.isFinite(sinceLastMs) && sinceLastMs >= 0 && sinceLastMs < 10 * 60 * 1000) {
+                        const expectedStageForDesired = desiredStage === 'race' ? 'completed' : desiredStage === 'sprint' ? 'partial_sprint' : 'partial_qualifying';
+                        if (currentStage === expectedStageForDesired) {
+                            continue;
+                        }
+                    }
                 }
 
                 console.log(`${logPrefix} Triggering scoring for Round ${race.race_order} (${race.race_id?.name || 'GP'}) - Target: ${desiredStage || 'force'}...`);
@@ -147,7 +167,7 @@ async function checkAndExecuteAutoScoring(options = {}) {
                 const hasSprint = Boolean(syncResult?.hasSprintClassification);
                 const hasQual = Boolean(syncResult?.hasQualifyingClassification);
 
-                // Resolve the highest stage that is both ready and represents progress over currentStatus
+                // Resolve the highest stage that is both ready and represents progress over currentStage
                 let targetStage = desiredStage;
                 let hasOfficialResults = false;
                 let missingReason = '';
@@ -156,10 +176,10 @@ async function checkAndExecuteAutoScoring(options = {}) {
                     if (hasRace) {
                         targetStage = 'race';
                         hasOfficialResults = true;
-                    } else if (hasSprint && currentStatus !== 'partial_sprint' && currentStatus !== 'completed') {
+                    } else if (hasSprint && currentStage !== 'partial_sprint' && currentStage !== 'completed') {
                         targetStage = 'sprint';
                         hasOfficialResults = true;
-                    } else if (hasQual && !currentStatus) {
+                    } else if (hasQual && !currentStage) {
                         targetStage = 'qualifying';
                         hasOfficialResults = true;
                     } else {
@@ -169,7 +189,7 @@ async function checkAndExecuteAutoScoring(options = {}) {
                     if (hasSprint) {
                         targetStage = 'sprint';
                         hasOfficialResults = true;
-                    } else if (hasQual && !currentStatus) {
+                    } else if (hasQual && !currentStage) {
                         targetStage = 'qualifying';
                         hasOfficialResults = true;
                     } else {
@@ -203,7 +223,7 @@ async function checkAndExecuteAutoScoring(options = {}) {
                 }
 
                 // Step B: Calculate and persist standings
-                const calcResult = await calculateAndPersistStandings(champ.id, race.id, { force: Boolean(options.force) || true });
+                const calcResult = await calculateAndPersistStandings(champ.id, race.id, { force: Boolean(options.force) });
 
                 if (calcResult.ok) {
                     console.log(`${logPrefix} SUCCESS: Scores calculated and persisted for Round ${race.race_order} (${race.race_id?.name}) [stage: ${calcResult.runStatus || targetStage}]!`);

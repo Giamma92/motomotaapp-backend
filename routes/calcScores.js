@@ -218,8 +218,11 @@ async function calculateAndPersistStandings(championshipId, calendarId, { force 
         }
     }
 
-    if (!force && existingRun?.status === runStatus && existingRun.source_hash === sourceHash) {
-        console.log(`Standings already up to date for championship ${championshipId}, calendar ${calendarId}`);
+    const encodedSourceHash = `${runStatus}:${sourceHash}`;
+    const existingStage = existingRun?.stage || (existingRun?.status === 'completed' ? 'completed' : null);
+
+    if (!force && existingRun?.status === 'completed' && existingStage === runStatus && (existingRun.source_hash === encodedSourceHash || existingRun.source_hash === sourceHash)) {
+        console.log(`Standings already up to date for championship ${championshipId}, calendar ${calendarId} (${runStatus})`);
         return { ok: true, results, scoringContext: effectiveScoringContext, runStatus };
     }
 
@@ -234,7 +237,7 @@ async function calculateAndPersistStandings(championshipId, calendarId, { force 
         race_bet_score: result.race_bet_score,
         race_bet_delta: result.race_bet_delta,
         score: result.score,
-        source_hash: sourceHash,
+        source_hash: encodedSourceHash,
         calculated_at: new Date().toISOString()
     }));
 
@@ -242,7 +245,7 @@ async function calculateAndPersistStandings(championshipId, calendarId, { force 
         championship_id: championshipId,
         calendar_id: calendarId,
         status: 'running',
-        source_hash: sourceHash,
+        source_hash: encodedSourceHash,
         calculated_at: new Date().toISOString(),
         last_error: null
     };
@@ -357,7 +360,8 @@ async function calculateAndPersistStandings(championshipId, calendarId, { force 
 
     await upsertStandingsRun({
         ...runPayload,
-        status: runStatus,
+        status: 'completed',
+        source_hash: encodedSourceHash,
         last_error: null
     });
 
@@ -382,15 +386,30 @@ async function calculateAndPersistStandings(championshipId, calendarId, { force 
         notifTitle = '⏱️ Punteggi parziali: Qualifiche';
         notifBody = `I punteggi delle qualifiche per ${raceName} sono stati calcolati.`;
       }
-      await notifyChampionshipUsers({
-        championshipId,
-        excludeUserId: null,
-        category: 'score_update',
-        title: notifTitle,
-        body: notifBody,
-        type: 'info',
-        link: `/standings-breakdown`
-      });
+
+      // Deduplicate score_update notifications within a 12-hour window for the same race & stage
+      const twelveHoursAgo = new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString();
+      const { data: recentDuplicateNotifs } = await db
+        .from('notifications')
+        .select('id')
+        .eq('championship_id', championshipId)
+        .eq('category', 'score_update')
+        .eq('title', notifTitle)
+        .eq('body', notifBody)
+        .gte('created_at', twelveHoursAgo)
+        .limit(1);
+
+      if (!recentDuplicateNotifs || recentDuplicateNotifs.length === 0) {
+        await notifyChampionshipUsers({
+          championshipId,
+          excludeUserId: null,
+          category: 'score_update',
+          title: notifTitle,
+          body: notifBody,
+          type: 'info',
+          link: `/standings-breakdown`
+        });
+      }
     } catch (err) {
       console.error('Failed to send score update notification:', err);
     }
@@ -400,26 +419,34 @@ async function calculateAndPersistStandings(championshipId, calendarId, { force 
     return { ok: true, results, scoringContext: effectiveScoringContext, runStatus };
 }
 
+function isPositiveNumber(value) {
+    if (value === null || value === undefined || value === '') {
+        return false;
+    }
+    const num = Number(value);
+    return Number.isFinite(num) && num > 0;
+}
+
 function hasQualifyingResults(motogpResults) {
     return (motogpResults || []).some(result =>
-        Number.isFinite(Number(result?.qualifying_scoring_position)) ||
-        Number.isFinite(Number(result?.qualifying_position)) ||
-        Number.isFinite(Number(result?.qualifying_scoring_points)) && Number(result?.qualifying_scoring_points) > 0 ||
-        Number.isFinite(Number(result?.qualifying_points)) && Number(result?.qualifying_points) > 0
+        isPositiveNumber(result?.qualifying_scoring_position) ||
+        isPositiveNumber(result?.qualifying_position) ||
+        isPositiveNumber(result?.qualifying_scoring_points) ||
+        isPositiveNumber(result?.qualifying_points)
     );
 }
 
 function hasSprintResults(motogpResults) {
     return (motogpResults || []).some(result =>
-        Number.isFinite(Number(result?.sprint_position)) ||
-        Number.isFinite(Number(result?.sprint_points)) && Number(result?.sprint_points) > 0
+        isPositiveNumber(result?.sprint_position) ||
+        isPositiveNumber(result?.sprint_points)
     );
 }
 
 function hasRaceResults(motogpResults) {
     return (motogpResults || []).some(result =>
-        Number.isFinite(Number(result?.race_position)) ||
-        Number.isFinite(Number(result?.race_points)) && Number(result?.race_points) > 0
+        isPositiveNumber(result?.race_position) ||
+        isPositiveNumber(result?.race_points)
     );
 }
 
@@ -618,26 +645,35 @@ function calculateNoLineupBetScore(result, fallbackScore) {
 function getRacePoints(result) {
     if (!result) return 0;
 
-    const explicitPoints = Number(result.race_points);
-    if (Number.isFinite(explicitPoints)) {
-        return explicitPoints;
+    if (result.race_points !== null && result.race_points !== undefined && result.race_points !== '') {
+        const explicitPoints = Number(result.race_points);
+        if (Number.isFinite(explicitPoints)) {
+            return explicitPoints;
+        }
+    }
+
+    if (!isPositiveNumber(result.race_position)) {
+        return 0;
     }
 
     return getMotoGPPoints(result.race_position);
 }
 
 function calculateBetDelta(selectedPosition, actualPosition, betScore) {
+    if (selectedPosition === null || selectedPosition === undefined || selectedPosition === '') {
+        return 0;
+    }
     const selected = Number(selectedPosition);
-    const actual = Number(actualPosition);
     const score = Number(betScore || 0);
 
-    if (!Number.isFinite(selected) || !Number.isFinite(score) || score === 0) {
+    if (!Number.isFinite(selected) || selected <= 0 || !Number.isFinite(score) || score === 0) {
         return 0;
     }
-    if (!Number.isFinite(actual)) {
-        return 0;
+    if (!isPositiveNumber(actualPosition)) {
+        return -Math.floor(score / 2);
     }
-    if (Number.isFinite(actual) && (selected === actual || selected === (actual - 1))) {
+    const actual = Number(actualPosition);
+    if (selected === actual || selected === (actual - 1)) {
         return score;
     }
     return -Math.floor(score / 2);
@@ -819,6 +855,8 @@ function computeSourceHash(payload) {
         .digest('hex');
 }
 
+const VOLATILE_HASH_KEYS = new Set(['now', 'modified_at', 'calculated_at']);
+
 function normalizeForHash(value) {
     if (Array.isArray(value)) {
         return value
@@ -828,6 +866,7 @@ function normalizeForHash(value) {
 
     if (value && typeof value === 'object') {
         return Object.keys(value)
+            .filter(key => !VOLATILE_HASH_KEYS.has(key))
             .sort()
             .reduce((acc, key) => {
                 acc[key] = normalizeForHash(value[key]);
@@ -1235,7 +1274,22 @@ async function loadStandingsRun(championshipId, calendarId) {
             return null;
         }
 
-        return data || null;
+        if (!data) return null;
+
+        let stage = data.status === 'completed' ? 'completed' : null;
+        const hashStr = String(data.source_hash || '');
+        if (hashStr.startsWith('partial_qualifying:')) {
+            stage = 'partial_qualifying';
+        } else if (hashStr.startsWith('partial_sprint:')) {
+            stage = 'partial_sprint';
+        } else if (hashStr.startsWith('completed:')) {
+            stage = 'completed';
+        }
+
+        return {
+            ...data,
+            stage
+        };
     } catch (err) {
         console.error('Unexpected error fetching standings run:', err);
         return null;
@@ -1250,23 +1304,37 @@ async function syncBetOutcomes(championshipId, calendarId, sprintBets, raceBets,
         );
         const resultByRider = new Map(motogpResults.map(result => [normalizeEntityId(result.rider_id), result]));
 
-        const sprintUpdates = scoringContext?.sprintSettled ? (sprintBets || []).map(bet => {
+        const sprintUpdates = (sprintBets || []).map(bet => {
+            if (!scoringContext?.sprintSettled) {
+                return {
+                    id: bet.id,
+                    outcome: null,
+                    modified_at: modifiedAt
+                };
+            }
             const actual = resultByRider.get(normalizeEntityId(bet.rider_id));
             return {
                 id: bet.id,
                 outcome: isSuccessfulBet(bet.position, actual?.sprint_position) ? 'true' : 'false',
                 modified_at: modifiedAt
             };
-        }) : [];
+        });
 
-        const raceUpdates = scoringContext?.raceSettled ? (raceBets || []).map(bet => {
+        const raceUpdates = (raceBets || []).map(bet => {
+            if (!scoringContext?.raceSettled) {
+                return {
+                    id: bet.id,
+                    outcome: null,
+                    modified_at: modifiedAt
+                };
+            }
             const actual = resultByRider.get(normalizeEntityId(bet.rider_id));
             return {
                 id: bet.id,
                 outcome: isSuccessfulBet(bet.position, actual?.race_position) ? 'true' : 'false',
                 modified_at: modifiedAt
             };
-        }) : [];
+        });
 
         if (sprintUpdates.length > 0) {
             for (const update of sprintUpdates) {
@@ -1318,12 +1386,11 @@ async function syncBetOutcomes(championshipId, calendarId, sprintBets, raceBets,
 }
 
 function isSuccessfulBet(selectedPosition, actualPosition) {
-    const selected = Number(selectedPosition);
-    const actual = Number(actualPosition);
-
-    if (!Number.isFinite(selected) || !Number.isFinite(actual)) {
+    if (!isPositiveNumber(selectedPosition) || !isPositiveNumber(actualPosition)) {
         return false;
     }
+    const selected = Number(selectedPosition);
+    const actual = Number(actualPosition);
 
     return selected === actual || selected === (actual - 1);
 }
