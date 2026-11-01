@@ -25,13 +25,9 @@ async function getMetadataMap() {
   return cache;
 }
 
-async function setAlias(userId, alias) {
-  const map = await getMetadataMap();
-  if (!map[userId]) map[userId] = {};
-  map[userId].alias = alias ? alias.trim() : null;
+async function saveMetadataMap(map) {
   cache = map;
   lastFetch = Date.now();
-
   try {
     const buf = Buffer.from(JSON.stringify(map, null, 2));
     await db.storage.from('avatars').upload('user_metadata.json', buf, {
@@ -43,9 +39,24 @@ async function setAlias(userId, alias) {
   }
 }
 
+async function setAlias(userId, alias) {
+  const map = await getMetadataMap();
+  if (!map[userId]) map[userId] = {};
+  map[userId].alias = alias ? alias.trim() : null;
+  await saveMetadataMap(map);
+}
+
 async function getAlias(userId) {
   const map = await getMetadataMap();
   return map[userId]?.alias || null;
+}
+
+async function setResetRequested(userId, requested = true) {
+  const map = await getMetadataMap();
+  if (!map[userId]) map[userId] = {};
+  map[userId].pwd_reset_requested = !!requested;
+  map[userId].pwd_reset_requested_at = requested ? new Date().toISOString() : null;
+  await saveMetadataMap(map);
 }
 
 async function attachAliases(usersArray, getUserIdFn = u => u?.id) {
@@ -65,9 +76,28 @@ async function attachAliases(usersArray, getUserIdFn = u => u?.id) {
   return usersArray;
 }
 
+async function attachUserMeta(usersArray) {
+  if (!Array.isArray(usersArray) || !usersArray.length) return usersArray;
+  const map = await getMetadataMap();
+  for (const item of usersArray) {
+    const uid = item?.id;
+    if (uid && map[uid]) {
+      item.alias = map[uid].alias || null;
+      item.pwd_reset_requested = !!map[uid].pwd_reset_requested;
+      item.pwd_reset_requested_at = map[uid].pwd_reset_requested_at || null;
+    } else {
+      item.pwd_reset_requested = false;
+      item.pwd_reset_requested_at = null;
+    }
+  }
+  return usersArray;
+}
+
 module.exports = {
   getMetadataMap,
   setAlias,
   getAlias,
-  attachAliases
+  setResetRequested,
+  attachAliases,
+  attachUserMeta
 };

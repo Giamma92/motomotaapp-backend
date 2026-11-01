@@ -1,8 +1,11 @@
 const express = require('express');
 const router = express.Router();
+const crypto = require('crypto');
 const authMiddleware = require('../middleware/authMiddleware');
+const authorizeRoles = require('../middleware/authorizeRoles');
 const db = require('../models/db');
-const { getAlias, setAlias } = require('../services/userMetaService');
+const { getAlias, setAlias, setResetRequested, attachUserMeta } = require('../services/userMetaService');
+const { createNotification } = require('../services/notificationService');
 
 // GET /api/user-info
 router.get('/user-info', authMiddleware, async (req, res) => {
@@ -140,9 +143,134 @@ router.put('/user/password', authMiddleware, async (req, res) => {
             return res.status(404).json({ error: 'User not found' });
         }
 
+        // Clear any reset requested flag
+        await setResetRequested(req.username, false);
+
         return res.json({ success: true });
     } catch (err) {
         return res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
+// ==========================================
+// ADMIN USER MANAGEMENT ENDPOINTS
+// ==========================================
+
+// GET /api/admin/users
+// Returns all users with their pwd_reset status, alias, and pending reset requests
+router.get('/admin/users', authMiddleware, authorizeRoles('Admin'), async (req, res) => {
+    try {
+        const { data: users, error } = await db
+            .from('users')
+            .select('id, profile_id, profile_image, first_name, last_name, last_access, email, pwd_reset')
+            .order('first_name', { ascending: true });
+
+        if (error) {
+            console.error('Error fetching admin users:', error);
+            return res.status(500).json({ error: error.message });
+        }
+
+        const withMeta = await attachUserMeta(users || []);
+        res.json(withMeta);
+    } catch (err) {
+        console.error('Unexpected error fetching admin users:', err);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
+// PUT /api/admin/users/:userId/enable-pwd-reset
+// Admin enables password reset for a specific user.
+// Optionally sets a temporary password if provided.
+router.put('/admin/users/:userId/enable-pwd-reset', authMiddleware, authorizeRoles('Admin'), async (req, res) => {
+    const { userId } = req.params;
+    const { tempPassword } = req.body || {};
+
+    try {
+        const updateData = { pwd_reset: 1 };
+        if (tempPassword && typeof tempPassword === 'string' && tempPassword.trim()) {
+            updateData.password = crypto.createHash('sha256').update(tempPassword.trim()).digest('hex');
+        }
+
+        const { data, error } = await db
+            .from('users')
+            .update(updateData)
+            .eq('id', userId)
+            .select('id, first_name, last_name, pwd_reset')
+            .single();
+
+        if (error) {
+            console.error('Error enabling pwd reset:', error);
+            return res.status(500).json({ error: error.message });
+        }
+
+        if (!data) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+
+        // Clear requested flag once enabled
+        await setResetRequested(userId, false);
+
+        // Send confirmation in-app notification to the user
+        try {
+            await createNotification({
+                userId: userId,
+                category: 'password_reset',
+                title: 'Reset Password Abilitato',
+                body: 'L\'amministratore ha abilitato il reset della password. Al tuo prossimo accesso dovrai impostare una nuova password.',
+                type: 'info',
+                link: '/reset-password'
+            });
+        } catch (notifErr) {
+            console.warn('Failed to notify user about reset enabled:', notifErr);
+        }
+
+        const displayName = `${data.first_name || ''} ${data.last_name || ''}`.trim() || data.id;
+
+        res.json({
+            success: true,
+            message: `Reset password abilitato per ${displayName}. Al prossimo login dovrà impostare una nuova password.`,
+            user: data
+        });
+    } catch (err) {
+        console.error('Unexpected error enabling pwd reset:', err);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
+// PUT /api/admin/users/:userId/disable-pwd-reset
+// Admin disables password reset for a specific user (reverts to pwd_reset = 0)
+router.put('/admin/users/:userId/disable-pwd-reset', authMiddleware, authorizeRoles('Admin'), async (req, res) => {
+    const { userId } = req.params;
+
+    try {
+        const { data, error } = await db
+            .from('users')
+            .update({ pwd_reset: 0 })
+            .eq('id', userId)
+            .select('id, first_name, last_name, pwd_reset')
+            .single();
+
+        if (error) {
+            console.error('Error disabling pwd reset:', error);
+            return res.status(500).json({ error: error.message });
+        }
+
+        if (!data) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+
+        await setResetRequested(userId, false);
+
+        const displayName = `${data.first_name || ''} ${data.last_name || ''}`.trim() || data.id;
+
+        res.json({
+            success: true,
+            message: `Reset password disabilitato per ${displayName}.`,
+            user: data
+        });
+    } catch (err) {
+        console.error('Unexpected error disabling pwd reset:', err);
+        res.status(500).json({ error: 'Internal server error' });
     }
 });
 

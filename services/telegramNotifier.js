@@ -248,7 +248,35 @@ async function notifyLineupPlaced({
   return true;
 }
 
+
+async function notifyPasswordResetRequest({ userId, userDisplayName, userEmail }) {
+  const { enabled } = getTelegramConfig();
+  if (!enabled) return false;
+
+  const lines = [
+    '🔐 <b>Richiesta Reset Password</b>',
+    `<b>Utente:</b> ${escapeTelegramHtml(userDisplayName)} (@${escapeTelegramHtml(userId)})`
+  ];
+
+  if (userEmail) {
+    lines.push(`<b>Email:</b> ${escapeTelegramHtml(userEmail)}`);
+  }
+
+  lines.push(`<b>Data:</b> ${escapeTelegramHtml(new Date().toLocaleString('it-IT'))}`);
+  lines.push('<i>Accedi al Pannello Amministratore per abilitare il reset password.</i>');
+
+  try {
+    await sendTelegramMessage(lines.join('\n'));
+    return true;
+  } catch (err) {
+    console.error('Failed to send Telegram password reset notification:', err);
+    return false;
+  }
+}
+
 module.exports = {
   notifyBetPlaced,
-  notifyLineupPlaced
+  notifyLineupPlaced,
+  notifyPasswordResetRequest
 };
+
